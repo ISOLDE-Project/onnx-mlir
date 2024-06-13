@@ -222,7 +222,8 @@ static llvm::cl::opt<EmissionTargetType, true> emissionTargetOpt(
         clEnumVal(EmitObj, "Compile the input into a object file."),
         clEnumVal(
             EmitLib, "Compile the input into a shared library (default)."),
-        clEnumVal(EmitJNI, "Compile the input into a jar file.")),
+        clEnumVal(EmitJNI, "Compile the input into a jar file."),
+        clEnumVal(EmitLLVM, "Generate LLVM IR for llc")),
     llvm::cl::init(EmitLib), llvm::cl::cat(OnnxMlirOptions));
 
 static llvm::cl::opt<bool, true> invokeOnnxVersionConverterOpt(

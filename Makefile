@@ -42,3 +42,10 @@ toolchain-onnx-mlir: Makefile
 
 onnx-mlir:
 	$(CMAKE) --build build --target onnx-mlir -j$(num_cores_half)
+
+.PHONY: test test-clean
+test:
+	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 graph.test
+test-clean:
+	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 clean
+	

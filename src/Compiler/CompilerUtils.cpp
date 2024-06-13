@@ -55,9 +55,10 @@ namespace onnx_mlir {
 // and/or the overridePreserveFiles enum.
 enum class KeepFilesOfType { All, MLIR, LLVMIR, Bitcode, Object, None };
 
-// Value below override at compile time by effectively setting the requested
+// Value below override  by effectively setting the requested
 // flags.
-static constexpr KeepFilesOfType overridePreserveFiles = KeepFilesOfType::None;
+static /* constexpr */ KeepFilesOfType overridePreserveFiles =
+    KeepFilesOfType::None;
 
 static bool keepFiles(KeepFilesOfType preserve) {
   // When wanting to preserve all files, do it regardless of isBitcode.
@@ -315,10 +316,14 @@ std::string getTargetFilename(
   case EmitJNI:
     return filenameNoExt + ".jar";
   case EmitLLVMIR:
+    return filenameNoExt + ".onnx.llvmir";
   case EmitONNXBasic:
   case EmitONNXIR:
+    return filenameNoExt + ".onnx.onnxir";
   case EmitMLIR:
     return filenameNoExt + ".onnx.mlir";
+  case EmitLLVM:
+    llvm_unreachable("invalid value");
   }
   llvm_unreachable("all cases should be handled in switch");
 }
@@ -737,6 +742,16 @@ static int emitOutputFiles(std::string outputNameNoExt,
     if (VerboseOutput)
       printf(
           "JNI archive '%s.jar' has been compiled.\n", outputNameNoExt.c_str());
+  } break;
+  case EmitLLVM: {
+    KeepFilesOfType tmpPreserveFile = overridePreserveFiles;
+    overridePreserveFiles = KeepFilesOfType::LLVMIR;
+    std::string modelObjNameWithExt;
+    int rc =
+        compileModuleToObject(module, outputNameNoExt, modelObjNameWithExt);
+    if (rc != CompilerSuccess)
+      return rc;
+    overridePreserveFiles = tmpPreserveFile;
   } break;
   default: {
     // Emit the version with all constants included.
