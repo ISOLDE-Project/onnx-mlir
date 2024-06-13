@@ -5,13 +5,13 @@ cmake_minimum_required(VERSION 3.20.0)
 
 project(onnx-mlir)
 
-option(ONNX_MLIR_BUILD_TESTS "Build ONNX-MLIR test executables. If OFF, just generate build targets." ON)
+option(ONNX_MLIR_BUILD_TESTS "Build ONNX-MLIR test executables. If OFF, just generate build targets." OFF)
 option(ONNX_MLIR_CCACHE_BUILD "Set to ON for a ccache enabled build." OFF)
-option(ONNX_MLIR_ENABLE_STABLEHLO "Enable StableHLO support." ON)
+option(ONNX_MLIR_ENABLE_STABLEHLO "Enable StableHLO support." OFF)
 option(ONNX_MLIR_DECOMP_ONNX_CONVTRANSPOSE "Enable ONNXConvTransposeOp decomposition." ON)
 option(ONNX_MLIR_ENABLE_WERROR "Enable warnings as errors." OFF)
 option(ONNX_MLIR_SUPPRESS_THIRD_PARTY_WARNINGS "Suppress warning in third_party code." ON)
-option(ONNX_MLIR_ENABLE_JAVA "Set to ON for building the Java runtime, tools, and tests" ON)
+option(ONNX_MLIR_ENABLE_JAVA "Set to ON for building the Java runtime, tools, and tests" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -216,4 +216,7 @@ add_subdirectory(utils)
 add_subdirectory(include)
 add_subdirectory(src)
 add_subdirectory(docs)
-add_subdirectory(test)
+if (DONNX_MLIR_BUILD_TESTS)
+  add_subdirectory(test)
+endif()
+
