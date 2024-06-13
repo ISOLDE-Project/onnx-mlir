@@ -18,12 +18,11 @@ CXX := clang++-10
 
 CMAKE ?=  $(CMAKE_INSTALL_DIR)/bin/cmake
 
+ONNX_MLIR_BUILD_TYPE    ?= "Debug"
+ONNX_MLIR_CMAKE_TARGET  ?= onnx-mlir
 
 
-
-#all: toolchain-llvm-main
-
-toolchain-onnx-mlir: Makefile
+toolchain-onnx-mlir: 
 	export PATH=$(PROTOC_DIR):$(PATH) && \
 	cd $(ROOT_DIR)/toolchain/onnx-mlir && rm -rf build && mkdir -p build && cd build && \
 	$(CMAKE)   \
@@ -35,13 +34,13 @@ toolchain-onnx-mlir: Makefile
 	-DCMAKE_CXX_COMPILER=$(CXX) \
 	-DCMAKE_INSTALL_PREFIX=$(ONNX_INSTALL_DIR) \
 	-DMLIR_DIR=${MLIR_DIR} \
-	-DCMAKE_BUILD_TYPE="Debug" \
+	-DCMAKE_BUILD_TYPE=$(ONNX_MLIR_BUILD_TYPE) \
 	..
 	cd $(ROOT_DIR)/toolchain/onnx-mlir && \
-	$(CMAKE) --build build --target onnx-mlir -j$(num_cores_half)
+	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
 
 onnx-mlir:
-	$(CMAKE) --build build --target onnx-mlir -j$(num_cores_half)
+	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
 
 .PHONY: test test-clean
 test:

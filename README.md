@@ -8,12 +8,12 @@ To build this project, as submodule of the **task5.2** working tree use the folo
 ```
 make
 ```
-this will call **cmake** to build onnx-mlir.  
+this will call **cmake** to (re)generete the build files and then builds onnx-mlir.  
 or
 ```
 make onnx-mlir 
 ```
-which will call **make**   to build onnx-mlir.  
+which call **cmake** to build onnx-mlir using whatever build files which are available.  
 
 
 <p align="center"><img width="50%" src="docs/logo/onnx-mlir-1280x640.png" /></p>
