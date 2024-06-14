@@ -21,6 +21,10 @@ CMAKE ?=  $(CMAKE_INSTALL_DIR)/bin/cmake
 ONNX_MLIR_BUILD_TYPE    ?= "Debug"
 ONNX_MLIR_CMAKE_TARGET  ?= onnx-mlir
 
+.PHONY: tool
+tool:
+	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
+
 
 toolchain-onnx-mlir: 
 	export PATH=$(PROTOC_DIR):$(PATH) && \
@@ -39,8 +43,6 @@ toolchain-onnx-mlir:
 	cd $(ROOT_DIR)/toolchain/onnx-mlir && \
 	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
 
-onnx-mlir:
-	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
 
 .PHONY: test test-clean
 test:

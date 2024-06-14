@@ -7,16 +7,15 @@ add_onnx_mlir_dialect_doc(aisle AISLE.td)
 
 add_onnx_mlir_library(OMAISLEOps
   # Top files for AISLE dialect
-
   AISLEAttributes.cpp
-  #AISLEDialect.cpp
-  #AISLEOps.cpp
-  #AISLETypes.cpp 
+  AISLEDialect.cpp
+  AISLEOps.cpp
+  AISLETypes.cpp 
 
   DEPENDS
   OMAISLEIncGen
   OMResultTypeInferenceOpInterfaceIncGen
-  #OMShapeInferenceOpInterfaceIncGen
+  OMShapeInferenceOpInterfaceIncGen
 
   LINK_LIBS PRIVATE
   OMDiagnostic

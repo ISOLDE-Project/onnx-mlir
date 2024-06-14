@@ -377,8 +377,8 @@ def AISLEQConstantOp : AISLE_Op< "qconstant",  [Pure, OpInterface<"mlir::ResultT
     ::llvm::SmallVector<std::int64_t> shape(2);
     shape[0]=1;
     shape[1]=value.size();;
-    auto output= ::mlir::RankedTensorType::get(llvm::makeArrayRef(shape),value.getElementType());
-    auto shapeAttr = $_builder.getI64ArrayAttr(::llvm::makeArrayRef(shape));
+    auto output= ::mlir::RankedTensorType::get(llvm::ArrayRef(shape),value.getElementType());
+    auto shapeAttr = $_builder.getI64ArrayAttr(::llvm::ArrayRef(shape));
     auto nameAtr =$_builder.getStringAttr(name);
     build($_builder, $_state, output, shapeAttr,nameAtr,value);
    
