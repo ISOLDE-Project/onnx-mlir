@@ -29,7 +29,10 @@ typedef enum {
   EmitObj,
   EmitLib,
   EmitJNI,
-  EmitLLVM
+  Emit_SPADE_Begin,
+  EmitSPADEIR,
+  EmitLLVM,
+  Emit_SPADE_End
 } EmissionTargetType;
 
 /* Input IR can be at one of these levels */

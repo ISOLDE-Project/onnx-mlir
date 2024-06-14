@@ -73,6 +73,7 @@ add_onnx_mlir_library(OMCompilerDialects
 
 add_onnx_mlir_library(OMCompilerPasses
   CompilerPasses.cpp
+  SpadeCompilerPasses.cpp
   DisposableGarbageCollector.cpp
 
   EXCLUDE_FROM_OM_LIBS

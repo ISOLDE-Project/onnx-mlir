@@ -9,6 +9,7 @@
 #include "src/Compiler/CompilerOptions.hpp"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
 #include "src/Dialect/ONNX/ONNXDialect.hpp"
+#include "src/Dialect/AISLE/AISLEDialect.hpp"
 
 #include "mlir/InitAllDialects.h"
 #include "mlir/Target/LLVMIR/Dialect/OpenMP/OpenMPToLLVMIRTranslation.h"
@@ -47,7 +48,8 @@ DialectRegistry registerDialects(ArrayRef<accel::Accelerator::Kind> accels) {
 
   if (useOldBufferization)
     memref::registerAllocationOpInterfaceExternalModels(registry);
-
+//
+  registry.insert<spade::AISLEDialect>();
   return registry;
 }
 

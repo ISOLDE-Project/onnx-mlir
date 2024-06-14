@@ -2,9 +2,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//===------------------------- CompilerPasses.cpp -------------------------===//
+//===------------------------- SpadeCompilerPasses.cpp
+//-------------------------===//
 //
-// Copyright 2022-2024 The IBM Research Authors.
+// Copyleft
 //
 // =============================================================================
 //
@@ -32,7 +33,6 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "src/Compiler/CompilerOptions.hpp"
-#include "src/Compiler/CompilerPasses.hpp"
 #include "src/Compiler/DisposableGarbageCollector.hpp"
 #include "src/Compiler/SpadeCompilerPasses.hpp"
 #include "src/Conversion/KrnlToLLVM/ConvertKrnlToLLVM.hpp"
@@ -42,17 +42,21 @@
 
 using namespace mlir;
 
-namespace onnx_mlir {
+namespace onnx_mlir_spade {
 
 void configurePasses() {
   // Set global vector machine support.
-  VectorMachineSupport::setGlobalVectorMachineSupport(march, mcpu, "");
-  configureConstPropONNXToONNXPass(onnxConstPropRoundFPToInt,
-      onnxConstPropExpansionBound, onnxConstPropDisablePatterns,
-      disableConstantProp);
-  configureOnnxToKrnlLoweringPass(optReport == OptReport::Parallel,
-      enableParallel, parallelizeOps, optReport == OptReport::Simd,
-      !disableSimdOption);
+  onnx_mlir::VectorMachineSupport::setGlobalVectorMachineSupport(
+      onnx_mlir::march, onnx_mlir::mcpu, "");
+  onnx_mlir::configureConstPropONNXToONNXPass(
+      onnx_mlir::onnxConstPropRoundFPToInt,
+      onnx_mlir::onnxConstPropExpansionBound,
+      onnx_mlir::onnxConstPropDisablePatterns, onnx_mlir::disableConstantProp);
+  onnx_mlir::configureOnnxToKrnlLoweringPass(
+      onnx_mlir::optReport == onnx_mlir::OptReport::Parallel,
+      onnx_mlir::enableParallel, onnx_mlir::parallelizeOps,
+      onnx_mlir::optReport == onnx_mlir::OptReport::Simd,
+      !onnx_mlir::disableSimdOption);
 }
 
 void addONNXToMLIRPasses(mlir::PassManager &pm, bool targetCPU) {
@@ -68,42 +72,43 @@ void addONNXToMLIRPasses(mlir::PassManager &pm, bool targetCPU) {
   // this function.
 
   pm.addInstrumentation(
-      std::make_unique<DisposableGarbageCollector>(pm.getContext()));
+      std::make_unique<onnx_mlir::DisposableGarbageCollector>(pm.getContext()));
 
   // Decompose first. Eliminates some unsupported ops without shape inference.
   pm.addNestedPass<func::FuncOp>(onnx_mlir::createDecomposeONNXToONNXPass());
-  if (!disableRecomposeOption)
+  if (!onnx_mlir::disableRecomposeOption)
     pm.addNestedPass<func::FuncOp>(onnx_mlir::createRecomposeONNXToONNXPass());
-  if (enableONNXHybridPass) {
-    pm.addNestedPass<func::FuncOp>(
-        onnx_mlir::createONNXHybridTransformPass(!disableRecomposeOption));
+  if (onnx_mlir::enableONNXHybridPass) {
+    pm.addNestedPass<func::FuncOp>(onnx_mlir::createONNXHybridTransformPass(
+        !onnx_mlir::disableRecomposeOption));
     // Convolution Optimization for CPU: enable when there are no accelerators.
-    if (targetCPU && enableConvOptPass) {
+    if (targetCPU && onnx_mlir::enableConvOptPass) {
       pm.addNestedPass<func::FuncOp>(onnx_mlir::createConvOptONNXToONNXPass(
-          enableSimdDataLayout && !disableSimdOption));
-      pm.addNestedPass<func::FuncOp>(
-          onnx_mlir::createONNXHybridTransformPass(!disableRecomposeOption));
+          onnx_mlir::enableSimdDataLayout && !onnx_mlir::disableSimdOption));
+      pm.addNestedPass<func::FuncOp>(onnx_mlir::createONNXHybridTransformPass(
+          !onnx_mlir::disableRecomposeOption));
     }
   } else {
     pm.addNestedPass<func::FuncOp>(onnx_mlir::createShapeInferencePass());
     pm.addPass(mlir::createCanonicalizerPass());
     pm.addNestedPass<func::FuncOp>(onnx_mlir::createShapeInferencePass());
     // Convolution Optimization for CPU: enable when there are no accelerators.
-    if (targetCPU && enableConvOptPass) {
+    if (targetCPU && onnx_mlir::enableConvOptPass) {
       pm.addNestedPass<func::FuncOp>(onnx_mlir::createConvOptONNXToONNXPass(
-          enableSimdDataLayout && !disableSimdOption));
+          onnx_mlir::enableSimdDataLayout && !onnx_mlir::disableSimdOption));
       pm.addNestedPass<func::FuncOp>(onnx_mlir::createShapeInferencePass());
     }
     pm.addNestedPass<func::FuncOp>(onnx_mlir::createConstPropONNXToONNXPass());
-    if (onnxOpTransformThreshold > 0) {
+    if (onnx_mlir::onnxOpTransformThreshold > 0) {
       // Dynamic iterate in ONNXOpTransformPass
-      pm.addPass(onnx_mlir::createONNXOpTransformPass(onnxOpTransformThreshold,
-          onnxOpTransformReport, targetCPU,
-          enableSimdDataLayout && !disableSimdOption, enableConvOptPass,
-          !disableRecomposeOption));
+      pm.addPass(onnx_mlir::createONNXOpTransformPass(
+          onnx_mlir::onnxOpTransformThreshold, onnx_mlir::onnxOpTransformReport,
+          targetCPU,
+          onnx_mlir::enableSimdDataLayout && !onnx_mlir::disableSimdOption,
+          onnx_mlir::enableConvOptPass, !onnx_mlir::disableRecomposeOption));
     } else {
       // Statically add extra passes
-      for (int i = 0; i < repeatOnnxTransform; i++) {
+      for (int i = 0; i < onnx_mlir::repeatOnnxTransform; i++) {
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addNestedPass<func::FuncOp>(onnx_mlir::createShapeInferencePass());
         pm.addNestedPass<func::FuncOp>(
@@ -117,9 +122,9 @@ void addONNXToMLIRPasses(mlir::PassManager &pm, bool targetCPU) {
 
   // One more call to ONNX shape inference/canonicalization/... to update
   // shape if possible.
-  if (enableONNXHybridPass) {
-    pm.addNestedPass<func::FuncOp>(
-        onnx_mlir::createONNXHybridTransformPass(!disableRecomposeOption));
+  if (onnx_mlir::enableONNXHybridPass) {
+    pm.addNestedPass<func::FuncOp>(onnx_mlir::createONNXHybridTransformPass(
+        !onnx_mlir::disableRecomposeOption));
   } else {
     pm.addNestedPass<func::FuncOp>(onnx_mlir::createShapeInferencePass());
     pm.addPass(mlir::createCanonicalizerPass());
@@ -133,18 +138,18 @@ void addONNXToMLIRPasses(mlir::PassManager &pm, bool targetCPU) {
   pm.addPass(mlir::createSymbolDCEPass());
 
   // Replace every DisposableElementsAttr with DenseElementsAttr.
-  pm.addPass(createScrubDisposablePass());
+  pm.addPass(onnx_mlir::createScrubDisposablePass());
 
   // Set onnx_node_name if it is missing. Keep this pass at the end of this
   // function and just before instrumentation.
-  pm.addPass(createSetONNXNodeNamePass());
+  pm.addPass(onnx_mlir::createSetONNXNodeNamePass());
 
   // Add instrumentation for Onnx Ops
   // Keep this pass at the end of this function.
-  unsigned instrumentActions = instrumentControlBits;
-  if (profileIR == onnx_mlir::ProfileIRs::Onnx) {
-    instrumentStage = onnx_mlir::InstrumentStages::Onnx;
-    instrumentOps = "onnx.*";
+  unsigned instrumentActions = onnx_mlir::instrumentControlBits;
+  if (onnx_mlir::profileIR == onnx_mlir::ProfileIRs::Onnx) {
+    onnx_mlir::instrumentStage = onnx_mlir::InstrumentStages::Onnx;
+    onnx_mlir::instrumentOps = "onnx.*";
     // Enable the first three bits for InstrumentBeforOp, InstrumentAfterOp
     // and InstrumentReportTime. Disable the last bit for
     // InstrumentReportMemory because of its big overhead. Users can
@@ -152,9 +157,9 @@ void addONNXToMLIRPasses(mlir::PassManager &pm, bool targetCPU) {
     // --InstrumentReportMemory option.
     instrumentActions |= (1 << 3) - 1;
   }
-  if (instrumentStage == onnx_mlir::InstrumentStages::Onnx)
-    pm.addNestedPass<func::FuncOp>(
-        onnx_mlir::createInstrumentPass(instrumentOps, instrumentActions));
+  if (onnx_mlir::instrumentStage == onnx_mlir::InstrumentStages::Onnx)
+    pm.addNestedPass<func::FuncOp>(onnx_mlir::createInstrumentPass(
+        onnx_mlir::instrumentOps, instrumentActions));
 }
 
 void addONNXToKrnlPasses(mlir::PassManager &pm, int optLevel, bool enableCSE,
@@ -188,8 +193,9 @@ void addONNXToKrnlPasses(mlir::PassManager &pm, int optLevel, bool enableCSE,
     pm.addNestedPass<func::FuncOp>(
         onnx_mlir::createInstrumentONNXSignaturePass());
   pm.addPass(onnx_mlir::createLowerToKrnlPass(/*enableTiling*/ optLevel >= 3,
-      /*enableSIMD*/ optLevel >= 3 && !disableSimdOption, enableParallel,
-      /*opsToCall*/ opsForCall));
+      /*enableSIMD*/ optLevel >= 3 && !onnx_mlir::disableSimdOption,
+      onnx_mlir::enableParallel,
+      /*opsToCall*/ onnx_mlir::opsForCall));
   // An additional pass of canonicalization is helpful because lowering
   // from ONNX dialect to Standard dialect exposes additional canonicalization
   // opportunities.
@@ -214,9 +220,9 @@ void addKrnlToLLVMPasses(
   // now. May revise this decision later.
 
   // After affine is lowered, KrnlRegion for affine scope can be removed.
-  pm.addNestedPass<func::FuncOp>(krnl::createLowerKrnlRegionPass());
+  pm.addNestedPass<func::FuncOp>(onnx_mlir::krnl::createLowerKrnlRegionPass());
 
-  if (enableParallel) {
+  if (onnx_mlir::enableParallel) {
     // Pass to ensure that memory allocated by parallel loops stay inside the
     // parallel region (privatization of memory). Otherwise, all threads would
     // end up sharing the same temporary data. This pass works on affine
@@ -235,7 +241,7 @@ void addKrnlToLLVMPasses(
   // Currently this has to be done *after* lowering the affine dialect because
   // operations in that dialect do not conform to the requirements explained
   // in https://mlir.llvm.org/docs/BufferDeallocationInternals.
-  if (useOldBufferization) {
+  if (onnx_mlir::useOldBufferization) {
     pm.addNestedPass<func::FuncOp>(
         mlir::bufferization::createBufferDeallocationPass());
   } else {
@@ -246,7 +252,7 @@ void addKrnlToLLVMPasses(
   }
 
   // Late introduction of OpenMP, after bufferization.
-  if (enableParallel) {
+  if (onnx_mlir::enableParallel) {
     pm.addPass(mlir::createConvertSCFToOpenMPPass());
     //  The alloca_scope ops are somewhat fragile; canonicalize remove them when
     //  redundant, which helps reliability of the compilation of these ops.
@@ -259,16 +265,19 @@ void addKrnlToLLVMPasses(
   // pm.addNestedPass<func::FuncOp>(krnl::createConvertSeqToMemrefPass());
 
   pm.addPass(mlir::memref::createFoldMemRefAliasOpsPass());
-  pm.addPass(krnl::createConvertKrnlToLLVMPass(verifyInputTensors,
-      /*useLRODATA=*/(modelSize == ModelSize::large),
-      /*storeConstantsToFile=*/storeConstantsToFile,
-      constantsToFileSingleThreshold, constantsToFileTotalThreshold,
-      outputNameNoExt, enableParallel));
+  pm.addPass(onnx_mlir::krnl::createConvertKrnlToLLVMPass(
+      onnx_mlir::verifyInputTensors,
+      /*useLRODATA=*/(onnx_mlir::modelSize == onnx_mlir::ModelSize::large),
+      /*storeConstantsToFile=*/onnx_mlir::storeConstantsToFile,
+      onnx_mlir::constantsToFileSingleThreshold,
+      onnx_mlir::constantsToFileTotalThreshold, outputNameNoExt,
+      onnx_mlir::enableParallel));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
   pm.addPass(mlir::createCanonicalizerPass());
 }
 
-InputIRLevelType determineInputIRLevel(mlir::OwningOpRef<ModuleOp> &module) {
+onnx_mlir::InputIRLevelType determineInputIRLevel(
+    mlir::OwningOpRef<ModuleOp> &module) {
   Operation *moduleOp = module->getOperation();
 
   // Collect dialect namespaces.
@@ -281,40 +290,37 @@ InputIRLevelType determineInputIRLevel(mlir::OwningOpRef<ModuleOp> &module) {
   bool hasONNXOps = llvm::any_of(dialectNamespace,
       [&](StringRef ns) { return (ns == ONNXDialect::getDialectNamespace()); });
   if (hasONNXOps)
-    return ONNXLevel;
+    return onnx_mlir::ONNXLevel;
 
   // If there are Krnl ops, the input level is MLIR.
   bool hasKrnlOps = llvm::any_of(dialectNamespace,
       [&](StringRef ns) { return (ns == KrnlDialect::getDialectNamespace()); });
   if (hasKrnlOps)
-    return MLIRLevel;
+    return onnx_mlir::MLIRLevel;
 
   // Otherwise, set to the lowest level, LLVMLevel.
-  return LLVMLevel;
+  return onnx_mlir::LLVMLevel;
 }
 
 void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
-    EmissionTargetType emissionTarget, std::string outputNameNoExt) {
+    onnx_mlir::EmissionTargetType emissionTarget, std::string outputNameNoExt) {
+  onnx_mlir::InputIRLevelType inputIRLevel = determineInputIRLevel(module);
 
-  if (Emit_SPADE_Begin < emissionTarget && emissionTarget < Emit_SPADE_End) {
-    onnx_mlir_spade::addPasses(module, pm, emissionTarget, outputNameNoExt);
-    return;
-  }
-  InputIRLevelType inputIRLevel = determineInputIRLevel(module);
+  if (inputIRLevel <= onnx_mlir::ONNXLevel &&
+      emissionTarget >= onnx_mlir::EmitONNXIR)
+    addONNXToMLIRPasses(pm, /*target CPU*/ onnx_mlir::maccel.empty());
 
-  if (inputIRLevel <= ONNXLevel && emissionTarget >= EmitONNXIR)
-    addONNXToMLIRPasses(pm, /*target CPU*/ maccel.empty());
-
-  if (emissionTarget >= EmitMLIR) {
-    if (inputIRLevel <= ONNXLevel)
-      addONNXToKrnlPasses(pm, OptimizationLevel, /*enableCSE*/ true,
-          instrumentONNXSignature, ONNXOpStats);
-    if (inputIRLevel <= MLIRLevel)
+  if (emissionTarget >= onnx_mlir::EmitMLIR) {
+    if (inputIRLevel <= onnx_mlir::ONNXLevel)
+      addONNXToKrnlPasses(pm, onnx_mlir::OptimizationLevel, /*enableCSE*/ true,
+          onnx_mlir::instrumentONNXSignature, onnx_mlir::ONNXOpStats);
+    if (inputIRLevel <= onnx_mlir::MLIRLevel)
       addKrnlToAffinePasses(pm);
   }
 
-  if (inputIRLevel <= LLVMLevel && emissionTarget >= EmitLLVMIR)
+  if (inputIRLevel <= onnx_mlir::LLVMLevel &&
+      emissionTarget >= onnx_mlir::EmitLLVMIR)
     addKrnlToLLVMPasses(pm, outputNameNoExt, /*enableCSE=*/true);
 }
 
-} // namespace onnx_mlir
+} // namespace onnx_mlir_spade

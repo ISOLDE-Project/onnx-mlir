@@ -323,6 +323,8 @@ std::string getTargetFilename(
   case EmitMLIR:
     return filenameNoExt + ".onnx.mlir";
   case EmitLLVM:
+  case Emit_SPADE_Begin:
+  case Emit_SPADE_End:
     llvm_unreachable("invalid value");
   }
   llvm_unreachable("all cases should be handled in switch");
