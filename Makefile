@@ -21,8 +21,8 @@ CMAKE ?=  $(CMAKE_INSTALL_DIR)/bin/cmake
 ONNX_MLIR_BUILD_TYPE    ?= "Debug"
 ONNX_MLIR_CMAKE_TARGET  ?= onnx-mlir
 
-.PHONY: tool
-tool:
+.PHONY: compiler
+compiler:
 	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
 
 
