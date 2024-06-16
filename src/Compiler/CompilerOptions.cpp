@@ -223,7 +223,15 @@ static llvm::cl::opt<EmissionTargetType, true> emissionTargetOpt(
         clEnumVal(
             EmitLib, "Compile the input into a shared library (default)."),
         clEnumVal(EmitJNI, "Compile the input into a jar file."),
-        clEnumVal(EmitLLVM, "Generate LLVM IR for llc")),
+        clEnumVal(EmitSPADEIR, "SPADE: Lower the input to AISLE dialect."),
+        clEnumVal(EmitSPADEMLIR,
+            "SPADE: Lower the input to MLIR built-in transformation dialect."),
+        clEnumVal(
+            EmitSPADELLVMIR, "SPADE: Lower the input to LLVM MLIR dialect."),
+        clEnumVal(EmitSPADELLVM,
+            "SPADE: Compile the input into a LLVM IR file (*.ll)."),
+        clEnumVal(EmitSPADEObj,
+            "SPADE: Cross compile the input into a RISC-V object file")),
     llvm::cl::init(EmitLib), llvm::cl::cat(OnnxMlirOptions));
 
 static llvm::cl::opt<bool, true> invokeOnnxVersionConverterOpt(
@@ -1057,7 +1065,6 @@ std::string getLibraryPath() {
 // as lrodataScript.
 std::string getToolPath(
     const std::string &tool, bool flag /*false by default*/) {
-
   if (!flag) {
     std::string execDir = llvm::sys::path::parent_path(getExecPath()).str();
     llvm::SmallString<8> toolPath(execDir);

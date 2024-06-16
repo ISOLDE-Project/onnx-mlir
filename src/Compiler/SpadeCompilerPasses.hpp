@@ -19,7 +19,6 @@ namespace onnx_mlir_spade {
 // Configures passes up front based on command line options.
 void configurePasses();
 
-void addONNXToMLIRPasses(mlir::PassManager &pm, bool targetCPU);
 void addONNXToKrnlPasses(mlir::PassManager &pm, int optLevel, bool enableCSE,
     bool enableInstrumentONNXSignature, std::string ONNXOpsStatFilename);
 void addKrnlToAffinePasses(mlir::PassManager &pm);

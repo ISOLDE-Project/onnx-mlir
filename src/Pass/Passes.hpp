@@ -122,3 +122,7 @@ std::unique_ptr<mlir::Pass> createConvertKrnlToLLVMPass(bool verifyInputTensors,
 std::unique_ptr<mlir::Pass> createConvertONNXToTOSAPass();
 
 } // namespace onnx_mlir
+
+namespace spade {
+    std::unique_ptr<mlir::Pass> createLowerToAISLEPass();
+} //namespace spade

@@ -8,14 +8,14 @@ This repo is intended to be a git submodule of [task5.2](https://github.com/ISOL
 
 To build this project, as submodule of the **task5.2** working tree use the folowings, in the project root folder:
 ```
-make
+make toolchain-onnx-mlir
 ```
 this will call **cmake** to (re)generete the build files and then builds onnx-mlir.  
 or
 ```
-make onnx-mlir 
+make compiler 
 ```
-which call **cmake** to build onnx-mlir using whatever build files which are available.  
+which call **cmake** to build onnx-mlir using whatever build files are available.  
 
 
 <p align="center"><img width="50%" src="docs/logo/onnx-mlir-1280x640.png" /></p>

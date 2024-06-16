@@ -322,9 +322,16 @@ std::string getTargetFilename(
     return filenameNoExt + ".onnx.onnxir";
   case EmitMLIR:
     return filenameNoExt + ".onnx.mlir";
-  case EmitLLVM:
-  case Emit_SPADE_Begin:
-  case Emit_SPADE_End:
+  case EmitSPADEIR:
+    return filenameNoExt + ".spade.aisle";
+  case EmitSPADEMLIR:
+    return filenameNoExt + ".spade.mlir";
+  case EmitSPADELLVMIR:
+    return filenameNoExt + ".spade.llvm";
+  case EmitSPADE_Begin:
+  case EmitSPADELLVM:
+  case EmitSPADEObj:
+  case EmitSPADE_End:
     llvm_unreachable("invalid value");
   }
   llvm_unreachable("all cases should be handled in switch");
@@ -745,7 +752,7 @@ static int emitOutputFiles(std::string outputNameNoExt,
       printf(
           "JNI archive '%s.jar' has been compiled.\n", outputNameNoExt.c_str());
   } break;
-  case EmitLLVM: {
+  case EmitSPADELLVM: {
     KeepFilesOfType tmpPreserveFile = overridePreserveFiles;
     overridePreserveFiles = KeepFilesOfType::LLVMIR;
     std::string modelObjNameWithExt;

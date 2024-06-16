@@ -135,11 +135,11 @@ void ONNXToAISLELoweringPass::runOnOperation() {
   // the set of patterns that will lower the frontend operations.
   RewritePatternSet patterns(&getContext());
 
-  TypeConverter contiRVTypeConverter;
+  TypeConverter aTypeConverter;
 
   // Define patterns.
   populateONNXToAISLEConversionPattern(
-      patterns, contiRVTypeConverter, &getContext(), enableTiling, enableParallel);
+      patterns, aTypeConverter, &getContext(), enableTiling, enableParallel);
 
   // Rewrite patterns for accelerators.
   //for (auto *accel : onnx_mlir::accel::Accelerator::getAccelerators())

@@ -296,7 +296,7 @@ InputIRLevelType determineInputIRLevel(mlir::OwningOpRef<ModuleOp> &module) {
 void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
     EmissionTargetType emissionTarget, std::string outputNameNoExt) {
 
-  if (Emit_SPADE_Begin < emissionTarget && emissionTarget < Emit_SPADE_End) {
+  if (EmitSPADE_Begin < emissionTarget && emissionTarget < EmitSPADE_End) {
     onnx_mlir_spade::addPasses(module, pm, emissionTarget, outputNameNoExt);
     return;
   }
