@@ -9,7 +9,6 @@
 // Defines AISLE Dialect Definitions, Types, and Operations.
 //
 //
-// After changes that impact AISLE, run "make OMAISLEOpsIncTranslation".
 // After changes that impact the documentation of the ops, run
 // "make onnx-mlir-docs".
 //

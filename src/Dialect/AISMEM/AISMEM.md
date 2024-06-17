@@ -26,8 +26,7 @@ make[4]: Leaving directory '/home/uic52463/hdd2/task5.2/toolchain/onnx-mlir/buil
 TRy to see if the library gets build:
 
 ```
-make ONNX_MLIR_CMAKE_TARGET=OMAISLEIncGen toolchain-onnx-mlir
-make ONNX_MLIR_CMAKE_TARGET=OMAISMEMOps compiler
+make ONNX_MLIR_CMAKE_TARGET=OMAISMEMOps toolchain-onnx-mlir
 ```
 Output should be similar to: 
 ```

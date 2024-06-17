@@ -13,6 +13,7 @@ add_onnx_mlir_library(OMAISMEMOps
   AISMEMTypes.cpp 
 
   DEPENDS
+  OMAISLEIncGen
   OMAISMEMIncGen
   OMResultTypeInferenceOpInterfaceIncGen
   OMShapeInferenceOpInterfaceIncGen
