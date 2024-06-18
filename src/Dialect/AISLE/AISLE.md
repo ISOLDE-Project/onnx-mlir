@@ -1,5 +1,6 @@
 # AISLE - **A**utomot**I**ve demon**S**trator m**L**ir dial**E**ct
 
+Dialect has to be registered in [CompilerDialects.cpp](../../Compiler/CompilerDialects.cpp).  
 After you edit [AISLE.td](AISLE.td) make sure you run:  
 ```
 make ONNX_MLIR_CMAKE_TARGET=OMAISLEIncGen toolchain-onnx-mlir

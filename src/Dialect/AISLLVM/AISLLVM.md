@@ -1,5 +1,5 @@
 # AISLLVM	**A**utomot**I**ve Demon**S**trator **LLVM** dialect
-
+Dialect has to be registered in [CompilerDialects.cpp](../../Compiler/CompilerDialects.cpp).  
 After you edit [AISLLVM.td](AISLLVM.td) make sure you run:  
 ```
 make ONNX_MLIR_CMAKE_TARGET=OMAISLLVMIncGen toolchain-onnx-mlir

@@ -25,7 +25,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
-#define DEBUG_TYPE "RVToMem_GEMM"
+#define DEBUG_TYPE "AISLE_TO_AISMEM_GEMM"
 using namespace mlir;
 
 namespace spade {
@@ -35,13 +35,13 @@ struct AISMEMGEMMOpLowering : public ConversionPattern {
 
     /**!!
     */  
-    using theOperation  = spade::AISMEMGEMMOp;
-    using theAdaptor    = spade::AISMEMGEMMOpAdaptor;
+    using theOperation  = spade::AISLEGEMMOp;
+    using theAdaptor    = spade::AISLEGEMMOpAdaptor;
     using theNewOp      = spade::AISMEMGEMMOp;
 
     AISMEMGEMMOpLowering(MLIRContext *ctx)
-        : ConversionPattern(spade::AISMEMGEMMOp::getOperationName(), 1, ctx) {
-        // ctx->getOrLoadDialect<spade::AISMEMDialect>();
+        : ConversionPattern(theOperation::getOperationName(), 1, ctx) {
+
     }
 
     LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
@@ -130,7 +130,7 @@ struct AISMEMGEMMOpLowering : public ConversionPattern {
     }
 };
 
-void populateLoweringAISMEMGEMMOpPattern(RewritePatternSet &patterns,
+void populateLoweringAISLEGEMMOpPattern(RewritePatternSet &patterns,
         TypeConverter &typeConverter, MLIRContext *ctx, bool enableParallel) {
     patterns.insert<AISMEMGEMMOpLowering>(ctx);
 }

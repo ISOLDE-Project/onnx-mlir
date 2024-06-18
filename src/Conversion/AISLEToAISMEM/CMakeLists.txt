@@ -6,12 +6,13 @@
 # Please keep in alphabetical order.
 add_onnx_mlir_library(OMAISLEToAISMEM
   ConvertAISLEToAISMEM.cpp
+  Constant/QConstant.cpp
   Math/GEMM.cpp
   
   LINK_LIBS PUBLIC
 
   OMAISLEOps
-  OMAISLLVMOps
+  OMAISMEMOps
   OMSupport
   MLIRFuncDialect
   MLIRFuncTransforms

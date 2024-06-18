@@ -125,4 +125,7 @@ std::unique_ptr<mlir::Pass> createConvertONNXToTOSAPass();
 
 namespace spade {
     std::unique_ptr<mlir::Pass> createLowerToAISLEPass();
+
+    std::unique_ptr<mlir::Pass> createLowerToAISMEMPass();
+
 } //namespace spade

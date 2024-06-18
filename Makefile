@@ -47,6 +47,8 @@ toolchain-onnx-mlir:
 .PHONY: test test-clean
 test:
 	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 graph.test.aisle
+	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 graph.test.aismem
+	
 test-clean:
 	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 clean
 	

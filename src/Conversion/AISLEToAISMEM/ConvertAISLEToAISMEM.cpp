@@ -34,6 +34,8 @@ namespace spade {
 void populateAISLEToAISMEMConversionPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx) {
 
+  populateLoweringAISLEQConstantOpPattern(patterns, typeConverter, ctx); 
+  
   populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx, true);
 }
 
@@ -93,7 +95,7 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
   // lowering. ONNXNoneOp will be dangling and removed by calling
   // canonicalization after the lowering.
   // target.addLegalOp<::mlir::ONNXNoneOp>();
-  target.addLegalOp<::spade::AISLEQConstantOp>();
+//  target.addLegalOp<::spade::AISLEQConstantOp>();
   // target.addIllegalOp<::conti::AISLEConvOp>();
   // target.addIllegalOp<::conti::AISLEReluOp>();
   // target.addIllegalOp<::conti::AISLEMaxPoolOp>();

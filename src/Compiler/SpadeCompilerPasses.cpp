@@ -217,15 +217,19 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
 
   if (emissionTarget >= onnx_mlir::EmitSPADEMLIR) {
     if (inputIRLevel <= onnx_mlir::ONNXLevel)
-      onnx_mlir_spade::addONNXToKrnlPasses(pm, onnx_mlir::OptimizationLevel, /*enableCSE*/ true,
-          onnx_mlir::instrumentONNXSignature, onnx_mlir::ONNXOpStats);
-    if (inputIRLevel <= onnx_mlir::MLIRLevel)
-     onnx_mlir_spade::addKrnlToAffinePasses(pm);
+      onnx_mlir_spade::addONNXToKrnlPasses(pm, onnx_mlir::OptimizationLevel,
+          /*enableCSE*/ true, onnx_mlir::instrumentONNXSignature,
+          onnx_mlir::ONNXOpStats);
+    if (inputIRLevel <= onnx_mlir::MLIRLevel) {
+      onnx_mlir_spade::addKrnlToAffinePasses(pm);
+    }
+    pm.addPass(spade::createLowerToAISMEMPass());
   }
 
   if (inputIRLevel <= onnx_mlir::LLVMLevel &&
       emissionTarget >= onnx_mlir::EmitSPADELLVMIR)
-    onnx_mlir_spade::addKrnlToLLVMPasses(pm, outputNameNoExt, /*enableCSE=*/true);
+    onnx_mlir_spade::addKrnlToLLVMPasses(
+        pm, outputNameNoExt, /*enableCSE=*/true);
 }
 
 } // namespace onnx_mlir_spade
