@@ -191,3 +191,8 @@ dmypy.json
 
 compile_commands.json
 .clangd/
+
+*.onnx
+*.onnx.*
+*.spade.*
+*.tmp
