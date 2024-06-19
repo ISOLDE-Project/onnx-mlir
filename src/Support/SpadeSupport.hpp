@@ -43,7 +43,7 @@ inline void dumpBlock(mlir::Operation *op){
 template<typename OperantionType>
 inline void dumpUsers(OperantionType op){
     ::llvm::outs()<<">>Users of\n";
-    op.dump();
+    op->dump();
     ::llvm::outs()<<"\n";
     for (auto v : op->getUsers()) {
       v->dump();
