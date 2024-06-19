@@ -110,6 +110,11 @@ void ONNXToAISLELoweringPass::runOnOperation() {
   // lowering. ONNXNoneOp will be dangling and removed by calling
   // canonicalization after the lowering.
   target.addLegalOp<::mlir::ONNXNoneOp>();
+  target.addLegalOp<mlir::ONNXConstantOp>();
+  target.addLegalOp<mlir::ONNXEntryPointOp>();
+  target.addLegalOp<func::ReturnOp>();
+  
+
 
 
 

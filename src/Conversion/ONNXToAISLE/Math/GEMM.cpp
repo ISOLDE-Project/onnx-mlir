@@ -196,19 +196,24 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
     //auto newResult = tblgen_repl_values[0];//tblgen_newOperation_2->getResult(0);
    // op->replaceAllUsesWith(newResult);
     //op->getResults().replaceAllUsesWith(newResult);
-    //rewriter.eraseOp(op);
+    //
     // Find the func.return operation and update its operand
     for (Operation *user : op->getResult(0).getUsers()) {
       if (auto returnOp = dyn_cast<func::ReturnOp>(user)) {
-
-        returnOp.setOperand(0, tblgen_repl_values[0]);
+         rewriter.setInsertionPoint(returnOp);
+         rewriter.replaceOpWithNewOp<func::ReturnOp>(returnOp, tblgen_repl_values[0]);
+         //rewriter.eraseOp(returnOp);
+       // returnOp.setOperand(0, tblgen_repl_values[0]);
       };
     }
   
 
 
-    spade::dumpBlock(op);
+    
     spade::dumpUsers(op);
+    //rewriter.eraseOp(op);
+    spade::dumpBlock(tblgen_newOperation_2);
+
     return ::mlir::success();
   }
 };

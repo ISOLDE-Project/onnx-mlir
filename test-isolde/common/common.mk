@@ -125,11 +125,11 @@ graph.test :  $(ONNX_MODEL)
 
 graph.test.aisle :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitSPADEIR -o graph  $<
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --debug --mtriple=riscv32-unknown-elf --EmitSPADEIR -o graph  $<
 
 graph.test.aismem :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --debug --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
 
 
 graph.test.onnx :  $(ONNX_MODEL) 	
