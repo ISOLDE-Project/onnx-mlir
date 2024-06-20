@@ -17,10 +17,11 @@
 #include <bits/stdint-intn.h>
 #include <cstddef>
 
+#define DEBUG_TYPE "ONNXToAISLE_GEMM"
+
 using namespace mlir;
 
 namespace spade {
-
 
 struct ONNXGEMMOpLowering : public ConversionPattern {
 
@@ -46,64 +47,65 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
     auto C_shape = typeC.getShape();
     int64_t splitPoint = C_shape[1] / 2;
 
+    int64_t transB = attrAdaptor.getTransB();
 
+    if (transB != 1) {
+      assert(false && " transB != 0 is not implemented, 2024.06.20");
+    }
 
-//get A
+    // get A
     ::mlir::Value A = operandAdaptor.getA();
     ::mlir::Value A_Shape = onnx_to_aisle::create<theAdaptor>(
-        rewriter, oldOp, "A_shape", &theAdaptor::getA);    
-// get shape
-  TensorType typeA = A.getType().cast<TensorType>();
-  assert(typeA);
-  auto AShape = typeA.getShape();
-  
+        rewriter, oldOp, "A_shape", &theAdaptor::getA);
+    // get shape
+    TensorType typeA = A.getType().cast<TensorType>();
+    assert(typeA);
+    auto AShape = typeA.getShape();
 
-
-// split B
+    // split B
     std::pair<int64_t, int64_t> row;
     std::pair<int64_t, int64_t> col;
 
-    mlir::Value B =operandAdaptor.getB();
+    mlir::Value B = operandAdaptor.getB();
     TensorRawData rawDataB(B);
 
     TensorRawData rawDataB1;
-    row ={0,splitPoint};
-    col ={0,rawDataB.shape[1]};
-    rawDataB.splitMatrix(rawDataB1,row , col);
+    row = {0, splitPoint};
+    col = {0, rawDataB.shape[1]};
+    rawDataB.splitMatrix(rawDataB1, row, col);
     auto B1 = rawDataB1.createONNXConstantOp(rewriter, loc);
-    ::mlir::Value B1_Shape = onnx_to_aisle::create(
-        rewriter, B1, "B1_shape", rawDataB1.shape);
-//
+    ::mlir::Value B1_Shape =
+        onnx_to_aisle::create(rewriter, B1, "B1_shape", rawDataB1.shape);
+    //
     llvm::SmallVector<int64_t> gemm1_shape;
     gemm1_shape.push_back(AShape[0]);
     gemm1_shape.push_back(rawDataB1.shape[0]);
 
-
     TensorRawData rawDataB2;
-    row ={splitPoint,rawDataB.shape[0]};
-    col ={0,rawDataB.shape[1]};
-    rawDataB.splitMatrix(rawDataB2,row , col);
+    row = {splitPoint, rawDataB.shape[0]};
+    col = {0, rawDataB.shape[1]};
+    rawDataB.splitMatrix(rawDataB2, row, col);
     auto B2 = rawDataB2.createONNXConstantOp(rewriter, loc);
-    ::mlir::Value B2_Shape = onnx_to_aisle::create(
-        rewriter, B2, "B2_shape", rawDataB1.shape);
-//
+    ::mlir::Value B2_Shape =
+        onnx_to_aisle::create(rewriter, B2, "B2_shape", rawDataB1.shape);
+    //
     llvm::SmallVector<int64_t> gemm2_shape;
     gemm2_shape.push_back(AShape[0]);
     gemm2_shape.push_back(rawDataB2.shape[0]);
 
-   //split C  
+    // split C
     TensorRawData rawDataC(C);
 
     TensorRawData rawDataC1;
-    row ={0,rawDataC.shape[0]};
-    col ={0,splitPoint};
-    rawDataC.splitMatrix(rawDataC1,row , col);
+    row = {0, rawDataC.shape[0]};
+    col = {0, splitPoint};
+    rawDataC.splitMatrix(rawDataC1, row, col);
     auto C1 = rawDataC1.createONNXConstantOp(rewriter, loc);
 
     TensorRawData rawDataC2;
-    row ={0,rawDataC.shape[0]};
-    col ={splitPoint,rawDataC.shape[1]};
-    rawDataC.splitMatrix(rawDataC2,row , col);
+    row = {0, rawDataC.shape[0]};
+    col = {splitPoint, rawDataC.shape[1]};
+    rawDataC.splitMatrix(rawDataC2, row, col);
     auto C2 = rawDataC2.createONNXConstantOp(rewriter, loc);
 
     double alpha = attrAdaptor.getAlpha().convertToDouble();
@@ -112,7 +114,6 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
       assert(
           false && " Scalar multiplier(s) not supported, shall be set to 1.0 ");
     }
-
 
     ::llvm::SmallVector<::mlir::Value> tblgen_repl_values;
     theNewOp tblgen_newOperation_0;
@@ -129,9 +130,9 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
           oldOp.getTransAAttrName(), attrAdaptor.getTransAAttr()));
       tblgen_attrs.push_back(::mlir::NamedAttribute(
           oldOp.getTransBAttrName(), attrAdaptor.getTransBAttr()));
-// return type
+      // return type
       auto elementType = rewriter.getF32Type();
-      auto retType= mlir::RankedTensorType::get( gemm1_shape, elementType);
+      auto retType = mlir::RankedTensorType::get(gemm1_shape, elementType);
 
       ::llvm::SmallVector<::mlir::Type, 4> tblgen_types;
       tblgen_types.push_back(retType);
@@ -154,9 +155,9 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
           oldOp.getTransAAttrName(), attrAdaptor.getTransAAttr()));
       tblgen_attrs.push_back(::mlir::NamedAttribute(
           oldOp.getTransBAttrName(), attrAdaptor.getTransBAttr()));
-// return type
+      // return type
       auto elementType = rewriter.getF32Type();
-      auto retType= mlir::RankedTensorType::get( gemm2_shape, elementType);
+      auto retType = mlir::RankedTensorType::get(gemm2_shape, elementType);
 
       ::llvm::SmallVector<::mlir::Type, 4> tblgen_types;
       tblgen_types.push_back(retType);
@@ -165,7 +166,6 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
           loc, tblgen_types, tblgen_values, tblgen_attrs);
     }
 
-    
     spade::AISLEhstack tblgen_newOperation_2;
     {
       ::llvm::SmallVector<::mlir::Value> tblgen_values;
@@ -182,37 +182,19 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
           loc, tblgen_types, tblgen_values, tblgen_attrs);
     }
 
-
-
     for (auto v : ::llvm::SmallVector<::mlir::Value, 4>{
              tblgen_newOperation_2.getODSResults(0)}) {
       tblgen_repl_values.push_back(v);
     }
     assert(tblgen_repl_values.size());
 
-   //SmallVector<Value, 4> newResults(tblgen_newOperation_2->result_begin(), tblgen_newOperation_2->result_end());
-    
     rewriter.replaceOp(op, tblgen_repl_values);
-    //auto newResult = tblgen_repl_values[0];//tblgen_newOperation_2->getResult(0);
-   // op->replaceAllUsesWith(newResult);
-    //op->getResults().replaceAllUsesWith(newResult);
-    //
-    // Find the func.return operation and update its operand
-    for (Operation *user : op->getResult(0).getUsers()) {
-      if (auto returnOp = dyn_cast<func::ReturnOp>(user)) {
-         rewriter.setInsertionPoint(returnOp);
-         rewriter.replaceOpWithNewOp<func::ReturnOp>(returnOp, tblgen_repl_values[0]);
-         //rewriter.eraseOp(returnOp);
-       // returnOp.setOperand(0, tblgen_repl_values[0]);
-      };
-    }
-  
 
+    LLVM_DEBUG({ spade::dumpUsers(op); });
 
-    
-    spade::dumpUsers(op);
-    //rewriter.eraseOp(op);
-    spade::dumpBlock(tblgen_newOperation_2);
+    rewriter.eraseOp(C.getDefiningOp());
+    rewriter.eraseOp(B.getDefiningOp());
+    LLVM_DEBUG({ spade::dumpBlock(tblgen_newOperation_2); });
 
     return ::mlir::success();
   }
