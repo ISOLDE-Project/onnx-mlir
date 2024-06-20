@@ -36,7 +36,9 @@ void populateAISLEToAISMEMConversionPattern(RewritePatternSet &patterns,
 
   populateLoweringAISLEQConstantOpPattern(patterns, typeConverter, ctx); 
   
-  populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx, true);
+  populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx);
+
+  populateLoweringAISLEhstackOpPattern(patterns, typeConverter, ctx);
 }
 
 //===----------------------------------------------------------------------===//
@@ -49,7 +51,7 @@ struct AISLEToAISMEMLoweringPass
 
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AISLEToAISMEMLoweringPass)
 
-  StringRef getArgument() const { return "convert-contirv-to-contimem"; }
+  StringRef getArgument() const { return "convert-aisle-to-aismem"; }
 
   StringRef getDescription() const {
     return "Lower (some)AISLE ops to AISMEM dialect.";
@@ -90,15 +92,12 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
       scf::SCFDialect, spade::AISMEMDialect>();
   // Needed to support unsigned int computations. To be removed if we use a
   // scheme that does not rely on the UnrealizedConversionCastOp.
-  // target.addLegalOp<::mlir::UnrealizedConversionCastOp>();
+  target.addLegalOp<::mlir::UnrealizedConversionCastOp>();
   // Make ONNXNoneOp legal so that other ONNX ops can use it during the
   // lowering. ONNXNoneOp will be dangling and removed by calling
   // canonicalization after the lowering.
-  // target.addLegalOp<::mlir::ONNXNoneOp>();
-//  target.addLegalOp<::spade::AISLEQConstantOp>();
-  // target.addIllegalOp<::conti::AISLEConvOp>();
-  // target.addIllegalOp<::conti::AISLEReluOp>();
-  // target.addIllegalOp<::conti::AISLEMaxPoolOp>();
+ //  target.addLegalOp<::spade::AISLEhstack>();
+
 
   /*
     if (emitIntermediateIR) {

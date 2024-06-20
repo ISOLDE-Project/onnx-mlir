@@ -85,7 +85,7 @@ inline memref::AllocOp insertAlloc( ConversionPatternRewriter &rewriter, const L
     memref::AllocOp newAlloc;
     IntegerAttr alignmentAttr = rewriter.getI64IntegerAttr(16);
     if (theDim) {
-      memref::DimOp dim = llvm::dyn_cast<memref::DimOp>(theDim);
+      memref::DimOp dim = theDim;
       newAlloc =
           rewriter.create<memref::AllocOp>(loc, theType, ValueRange{dim});
       DenseI32ArrayAttr segment =

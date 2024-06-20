@@ -2,10 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//===--------------- QConstant.cpp - Lowering QConstant Op
-//-------------------===//
+//===------------ QConstant.cpp - Lowering QConstant Op ------------------===//
 //
-// Copyright 2023
+// Copyleft
 //
 // =============================================================================
 //
@@ -21,17 +20,16 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "set"
-#include "src/Dialect/AISMEM/AISMEMDialect.hpp"
-#include "src/Dialect/AISMEM/AISMEMOps.hpp"
 #include "src/Dialect/AISLE/AISLEDialect.hpp"
 #include "src/Dialect/AISLE/AISLEOps.hpp"
+#include "src/Dialect/AISMEM/AISMEMDialect.hpp"
+#include "src/Dialect/AISMEM/AISMEMOps.hpp"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 
 namespace spade {
-
 
 template <typename Oty>
 Operation *getUser_0(Oty &Op) {
@@ -42,7 +40,7 @@ Operation *getUser_0(Oty &Op) {
 }
 
 struct AISLEQConstantOpLowering : public ConversionPattern {
-  AISLEQConstantOpLowering(TypeConverter &typeConverter,MLIRContext *ctx)
+  AISLEQConstantOpLowering(TypeConverter &typeConverter, MLIRContext *ctx)
       : ConversionPattern(typeConverter,
             spade::AISLEQConstantOp::getOperationName(), 1, ctx) {
     // ctx->getOrLoadDialect<spade::AISLEDialect>();
@@ -61,15 +59,13 @@ struct AISLEQConstantOpLowering : public ConversionPattern {
 
     // lower down convOp
     rewriter.replaceOp(qConst, static_cast<mlir::Value>(newQConst));
-    //qConst->replaceAllUsesWith(newQConst);
+    // qConst->replaceAllUsesWith(newQConst);
 
- 
     return ::mlir::success();
   };
-
 };
-  void populateLoweringAISLEQConstantOpPattern(RewritePatternSet &patterns,
-      TypeConverter &typeConverter, MLIRContext *ctx) {
-    patterns.insert<AISLEQConstantOpLowering>(typeConverter,ctx);
-  }
+void populateLoweringAISLEQConstantOpPattern(RewritePatternSet &patterns,
+    TypeConverter &typeConverter, MLIRContext *ctx) {
+  patterns.insert<AISLEQConstantOpLowering>(typeConverter, ctx);
+}
 } // namespace spade

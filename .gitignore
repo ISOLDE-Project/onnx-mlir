@@ -196,3 +196,4 @@ compile_commands.json
 *.onnx.*
 *.spade.*
 *.tmp
+.clangd

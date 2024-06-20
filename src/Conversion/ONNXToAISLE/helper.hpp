@@ -136,9 +136,10 @@ struct TensorRawData {
         mlir::DenseElementsAttr::get(tensorType, llvm::ArrayRef(rawData));
 
     // Create the ONNXConstantOp using the builder
+    //(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsState, Attribute sparse_value, Attribute value)
     mlir::ONNXConstantOp constantOp = rewriter.create<mlir::ONNXConstantOp>(
-        loc, mlir::TypeAttr::get(tensorType), denseAttr);
-
+        loc,  /*sparse_value=*/nullptr, denseAttr);
+    assert(!constantOp.getSparseValue().has_value()); //sparse type unsupported by onnx framework
     return constantOp;
   }
   size_t rank() { return shape.size(); }

@@ -36,7 +36,7 @@ struct ONNXToAISLELoweringPass
 
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ONNXToAISLELoweringPass)
 
-  StringRef getArgument() const override { return "convert-onnx-to-contirv"; }
+  StringRef getArgument() const override { return "convert-onnx-to-aisle"; }
 
   StringRef getDescription() const override {
     return "Lower (some)ONNX ops to AISLE dialect.";
