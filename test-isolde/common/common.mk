@@ -74,6 +74,7 @@ RUNTIME_LLVM  ?= crt0-llvm.S.o
 
 #ONNX_INSTALL_DIR        ?= ${ROOT_DIR}/${INSTALL_PREFIX}/onnx-mlir
 ONNX_INSTALL_DIR        ?= ${ROOT_DIR}/toolchain/onnx-mlir/build/Debug
+ONNX_MLIR_FLAGS			?=	
 TOOLS_INSTALL_DIR       ?= ${ROOT_DIR}/install/onnx-mlir/py-codegen
 EXPORT_ELF              ?= ${ROOT_DIR}/HLS/aida/build/bin/export_elf
 
@@ -125,16 +126,16 @@ graph.test :  $(ONNX_MODEL)
 
 graph.test.aisle :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --debug --mtriple=riscv32-unknown-elf --EmitSPADEIR -o graph  $<
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEIR -o graph  $<
 
 graph.test.aismem :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --debug --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
 
 
 graph.test.onnx :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
 	
 
 .PHONY: clean

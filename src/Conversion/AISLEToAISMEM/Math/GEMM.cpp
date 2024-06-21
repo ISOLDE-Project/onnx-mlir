@@ -8,14 +8,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "src/Conversion/AISLEToAISMEM/helper.hpp"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "set"
 #include "src/Conversion/AISLEToAISMEM/helper.hpp"
 #include "src/Dialect/AISMEM/AISMEMDialect.hpp"
 #include "src/Dialect/AISMEM/AISMEMOps.hpp"
@@ -30,8 +28,6 @@ namespace spade {
 
 struct AISMEMGEMMOpLowering : public ConversionPattern {
 
-  /**!!
-   */
   using theOperation = spade::AISLEGEMMOp;
   using theAdaptor = spade::AISLEGEMMOpAdaptor;
   using theNewOp = spade::AISMEMGEMMOp;
@@ -54,16 +50,16 @@ struct AISMEMGEMMOpLowering : public ConversionPattern {
     ::mlir::Value C = operandAdaptor.getC();
 
     LLVM_DEBUG({ spade::dumpBlock(op); });
+
     //*
-    //* transform parameter
+    //* transform parameter(s)
     //*
 
-    std::set<Operation *> obsoleteOps;
-    aisle_to_aismem::getConversionCastOperand(A, obsoleteOps);
-    aisle_to_aismem::getConversionCastOperand(A_Shape, obsoleteOps);
-    aisle_to_aismem::getConversionCastOperand(B, obsoleteOps);
-    aisle_to_aismem::getConversionCastOperand(B_Shape, obsoleteOps);
-    aisle_to_aismem::getConversionCastOperand(C, obsoleteOps);
+    aisle_to_aismem::getConversionCastOperand(A);
+    aisle_to_aismem::getConversionCastOperand(A_Shape);
+    aisle_to_aismem::getConversionCastOperand(B);
+    aisle_to_aismem::getConversionCastOperand(B_Shape);
+    aisle_to_aismem::getConversionCastOperand(C);
 
     bool insert_dealloc = aisle_to_aismem::shallInsertDealoc(oldOp);
 
@@ -83,6 +79,7 @@ struct AISMEMGEMMOpLowering : public ConversionPattern {
       auto dealloc = rewriter.create<memref::DeallocOp>(loc, newAlloc);
       dealloc->moveBefore(&parentBlock->back());
     }
+
     //**
     ::llvm::SmallVector<::mlir::Value> tblgen_values;
     ::llvm::SmallVector<::mlir::NamedAttribute, 4> tblgen_attrs;
@@ -114,9 +111,7 @@ struct AISMEMGEMMOpLowering : public ConversionPattern {
 
     // lower down operation
     rewriter.replaceOp(oldOp, tblgen_repl_values);
-    oldOp->replaceAllUsesWith(newAlloc);
-
-    // aisle_to_aismem::eraseOp(rewriter, obsoleteOps);
+     oldOp->replaceAllUsesWith(newAlloc);
 
     LLVM_DEBUG({ spade::dumpBlock(tblgen_newOperation_0); });
     return ::mlir::success();

@@ -29,8 +29,6 @@ namespace spade {
 
 struct AISMEMhstackOpLowering : public ConversionPattern {
 
-  /**!!
-   */
   using theOperation = spade::AISLEhstack;
   using theAdaptor = spade::AISLEhstackAdaptor;
 
@@ -49,10 +47,9 @@ struct AISMEMhstackOpLowering : public ConversionPattern {
     ::mlir::Value A = operandAdaptor.getA();
     ::mlir::Value B = operandAdaptor.getB();
 
-    // LLVM_DEBUG({ spade::dumpBlock(op); });
-    spade::dumpBlock(op);
-    A.dump();
-    B.dump();
+    LLVM_DEBUG({ ::llvm::outs()<<"before\n";spade::dumpBlock(op); });
+    LLVM_DEBUG({ ::llvm::outs()<<"A:\n";A.dump(); });
+    LLVM_DEBUG({ ::llvm::outs()<<"B:\n";A.dump(); });
 
     bool insert_dealloc = aisle_to_aismem::shallInsertDealoc(oldOp);
 
@@ -63,7 +60,7 @@ struct AISMEMhstackOpLowering : public ConversionPattern {
 
     auto result = rewriter.create<memref::AllocOp>(loc, theType);
     result.setAlignmentAttr(alignmentAttr);
-    result.dump();
+    LLVM_DEBUG({ ::llvm::outs()<<"result:\n";result.dump(); });
 
     //-
     if (insert_dealloc) {
@@ -107,8 +104,7 @@ struct AISMEMhstackOpLowering : public ConversionPattern {
     rewriter.create<memref::DmaWaitOp>(loc, tag0, idx, numElements);
     rewriter.create<memref::DmaWaitOp>(loc, tag1, idx, numElements);
 
-
-//
+    //
     ::llvm::SmallVector<::mlir::Value> tblgen_repl_values;
     for (auto v :
         ::llvm::SmallVector<::mlir::Value, 4>{result.getODSResults(0)}) {
@@ -118,9 +114,7 @@ struct AISMEMhstackOpLowering : public ConversionPattern {
     rewriter.replaceOp(oldOp, tblgen_repl_values);
     oldOp->replaceAllUsesWith(result);
 
-    // aisle_to_aismem::eraseOp(rewriter, obsoleteOps);
-
-    // LLVM_DEBUG({ spade::dumpBlock(tblgen_newOperation_0); });
+    LLVM_DEBUG({ ::llvm::outs()<<"after\n";spade::dumpBlock(result); });
     return ::mlir::success();
   }
 };

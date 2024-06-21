@@ -31,6 +31,16 @@ inline void getConversionCastOperand(
     op = *cast_0.getInputs().begin();
   }
 }
+
+inline void getConversionCastOperand(mlir::Value &val) {
+  Operation *Op = val.getDefiningOp();
+  UnrealizedConversionCastOp cast_0 =
+      llvm::dyn_cast<UnrealizedConversionCastOp>(Op);
+  if (cast_0) {
+    val = *cast_0.getInputs().begin();
+  }
+}
+
 template <typename castop>
 inline mlir::Value insertConversionCast(
     ConversionPatternRewriter &rewriter, Location loc, mlir::Value X) {
@@ -65,7 +75,7 @@ inline bool shallInsertDealoc(operation &oldOp) {
   return insert_dealloc;
 }
 
-inline  memref::DimOp inferDim(Operation *op) {
+inline memref::DimOp inferDim(Operation *op) {
   /*
    * in case of dynamic tensors, use the DimOp of the arg%0
    */
@@ -73,7 +83,7 @@ inline  memref::DimOp inferDim(Operation *op) {
   {
     Block *block = op->getBlock();
     for (Block::iterator it = block->begin(); it != block->end(); ++it) {
-      result =llvm::dyn_cast<memref::DimOp>(*it);
+      result = llvm::dyn_cast<memref::DimOp>(*it);
       if (result) {
         break;
       }
@@ -81,29 +91,31 @@ inline  memref::DimOp inferDim(Operation *op) {
   }
   return result;
 }
-inline memref::AllocOp insertAlloc( ConversionPatternRewriter &rewriter, const Location& loc,const memref::DimOp& theDim,const MemRefType& theType ){
-    memref::AllocOp newAlloc;
-    IntegerAttr alignmentAttr = rewriter.getI64IntegerAttr(16);
-    if (theDim) {
-      memref::DimOp dim = theDim;
-      newAlloc =
-          rewriter.create<memref::AllocOp>(loc, theType, ValueRange{dim});
-      DenseI32ArrayAttr segment =
-          rewriter.getDenseI32ArrayAttr(ArrayRef<int32_t>{1, 0});
-      newAlloc->setAttr(::llvm::StringRef("operand_segment_sizes"), segment);
-    } else {
-      newAlloc = rewriter.create<memref::AllocOp>(loc, theType);
-    }
-    newAlloc.setAlignmentAttr(alignmentAttr);
-    return newAlloc;
+inline memref::AllocOp insertAlloc(ConversionPatternRewriter &rewriter,
+    const Location &loc, const memref::DimOp &theDim,
+    const MemRefType &theType) {
+  memref::AllocOp newAlloc;
+  IntegerAttr alignmentAttr = rewriter.getI64IntegerAttr(16);
+  if (theDim) {
+    memref::DimOp dim = theDim;
+    newAlloc = rewriter.create<memref::AllocOp>(loc, theType, ValueRange{dim});
+    DenseI32ArrayAttr segment =
+        rewriter.getDenseI32ArrayAttr(ArrayRef<int32_t>{1, 0});
+    newAlloc->setAttr(::llvm::StringRef("operand_segment_sizes"), segment);
+  } else {
+    newAlloc = rewriter.create<memref::AllocOp>(loc, theType);
+  }
+  newAlloc.setAlignmentAttr(alignmentAttr);
+  return newAlloc;
 }
 
-inline void eraseOp(ConversionPatternRewriter &rewriter, std::set<Operation *>& obsoleteOps){
-      for (auto o : obsoleteOps) {
-      UnrealizedConversionCastOp castOp =
-          llvm::dyn_cast<UnrealizedConversionCastOp>(o);
-      rewriter.eraseOp(castOp);
-    }
+inline void eraseOp(
+    ConversionPatternRewriter &rewriter, std::set<Operation *> &obsoleteOps) {
+  for (auto o : obsoleteOps) {
+    UnrealizedConversionCastOp castOp =
+        llvm::dyn_cast<UnrealizedConversionCastOp>(o);
+    rewriter.eraseOp(castOp);
+  }
 }
 
 } // namespace aisle_to_aismem
