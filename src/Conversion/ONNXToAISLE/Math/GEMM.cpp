@@ -192,8 +192,6 @@ struct ONNXGEMMOpLowering : public ConversionPattern {
 
     LLVM_DEBUG({ spade::dumpUsers(op); });
 
-    rewriter.eraseOp(C.getDefiningOp());
-    rewriter.eraseOp(B.getDefiningOp());
     LLVM_DEBUG({ spade::dumpBlock(tblgen_newOperation_2); });
 
     return ::mlir::success();

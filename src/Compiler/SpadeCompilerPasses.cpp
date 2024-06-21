@@ -213,6 +213,7 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
     onnx_mlir::addONNXToMLIRPasses(
         pm, /*target CPU*/ onnx_mlir::maccel.empty());
     pm.addPass(spade::createLowerToAISLEPass());
+    pm.addPass(mlir::createCanonicalizerPass());
   }
 
   if (emissionTarget >= onnx_mlir::EmitSPADEMLIR) {
@@ -224,6 +225,7 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
       onnx_mlir_spade::addKrnlToAffinePasses(pm);
     }
     pm.addPass(spade::createLowerToAISMEMPass());
+    pm.addPass(mlir::createCanonicalizerPass());
   }
 
   if (inputIRLevel <= onnx_mlir::LLVMLevel &&
