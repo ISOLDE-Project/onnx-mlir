@@ -164,13 +164,15 @@ void addKrnlToLLVMPasses(
   // pm.addNestedPass<func::FuncOp>(krnl::createConvertSeqToMemrefPass());
 
   pm.addPass(mlir::memref::createFoldMemRefAliasOpsPass());
-  pm.addPass(onnx_mlir::krnl::createConvertKrnlToLLVMPass(
-      onnx_mlir::verifyInputTensors,
-      /*useLRODATA=*/(onnx_mlir::modelSize == onnx_mlir::ModelSize::large),
-      /*storeConstantsToFile=*/onnx_mlir::storeConstantsToFile,
-      onnx_mlir::constantsToFileSingleThreshold,
-      onnx_mlir::constantsToFileTotalThreshold, outputNameNoExt,
-      onnx_mlir::enableParallel));
+  // pm.addPass(onnx_mlir::krnl::createConvertKrnlToLLVMPass(
+  //     onnx_mlir::verifyInputTensors,
+  //     /*useLRODATA=*/(onnx_mlir::modelSize == onnx_mlir::ModelSize::large),
+  //     /*storeConstantsToFile=*/onnx_mlir::storeConstantsToFile,
+  //     onnx_mlir::constantsToFileSingleThreshold,
+  //     onnx_mlir::constantsToFileTotalThreshold, outputNameNoExt,
+  //     onnx_mlir::enableParallel));
+  pm.addPass(spade::createLowerToLLVMIRPass());
+  pm.addPass(spade_2::createLowerToLLVMIRPass());
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
   pm.addPass(mlir::createCanonicalizerPass());
 }
@@ -229,9 +231,10 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
   }
 
   if (inputIRLevel <= onnx_mlir::LLVMLevel &&
-      emissionTarget >= onnx_mlir::EmitSPADELLVMIR)
+      emissionTarget >= onnx_mlir::EmitSPADELLVMIR) {
     onnx_mlir_spade::addKrnlToLLVMPasses(
         pm, outputNameNoExt, /*enableCSE=*/true);
+  }
 }
 
 } // namespace onnx_mlir_spade

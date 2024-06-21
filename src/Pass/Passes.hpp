@@ -124,8 +124,14 @@ std::unique_ptr<mlir::Pass> createConvertONNXToTOSAPass();
 } // namespace onnx_mlir
 
 namespace spade {
-    std::unique_ptr<mlir::Pass> createLowerToAISLEPass();
+std::unique_ptr<mlir::Pass> createLowerToAISLEPass();
 
-    std::unique_ptr<mlir::Pass> createLowerToAISMEMPass();
+std::unique_ptr<mlir::Pass> createLowerToAISMEMPass();
 
-} //namespace spade
+std::unique_ptr<mlir::Pass> createLowerToLLVMIRPass();
+
+} // namespace spade
+
+namespace spade_2 {
+std::unique_ptr<mlir::Pass> createLowerToLLVMIRPass();
+} // namespace spade_2
