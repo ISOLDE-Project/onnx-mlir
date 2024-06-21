@@ -132,6 +132,9 @@ graph.test.aismem :  $(ONNX_MODEL)
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
 
+graph.test.aisllvm :  $(ONNX_MODEL) 	
+	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVM -o graph  $<
 
 graph.test.onnx :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
@@ -140,7 +143,7 @@ graph.test.onnx :  $(ONNX_MODEL)
 
 .PHONY: clean
 clean:
-	rm -f graph.* libsim.a *.o *.riscv32* *.ll *.log *.py *.S *.csv *.tar.gz MemManager.cpp *.yaml *.mlir *.inc *.tmp *.npy
+	rm -f graph.* libsim.a *.o *.riscv32* *.ll *.log *.py *.S *.csv *.tar.gz MemManager.cpp *.yaml  *.inc *.tmp *.npy
 
 .PHONY: rm_onnx
 rm_onnx:
