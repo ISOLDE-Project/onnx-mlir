@@ -132,6 +132,10 @@ graph.test.aismem :  $(ONNX_MODEL)
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
 
+graph.test.aisllvmir :  $(ONNX_MODEL) 	
+	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVMIR -o graph  $<
+
 graph.test.aisllvm :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVM -o graph  $<

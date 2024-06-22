@@ -48,7 +48,8 @@ toolchain-onnx-mlir:
 test:
 #	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.onnx 
 #	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisle
-	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aismem
+#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aismem
+	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvmir
 	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvm
 
 test-clean:

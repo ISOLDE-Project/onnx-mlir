@@ -104,11 +104,12 @@ public:
     }
      
      auto ptrType = LLVM::LLVMPointerType::get(op->getContext());
-    auto allocatedPtr = rewriter.create<LLVM::AllocaOp>(loc, vectorType, elementType, lastValue, 16);
+      Value size = rewriter.create<LLVM::ConstantOp>(loc, globalType, 64);
+    auto allocatedPtr = rewriter.create<LLVM::AllocaOp>(loc, ptrType, vectorType, size, 16);
     rewriter.create<LLVM::StoreOp>(loc, lastValue, allocatedPtr);
-    auto castedPtr = rewriter.create<LLVM::BitcastOp>(loc, ptrType, allocatedPtr);
+    //auto castedPtr = rewriter.create<LLVM::BitcastOp>(loc, ptrType, allocatedPtr);
     //rewriter.replaceOp(op, {lastValue});
-    rewriter.replaceOp(op, static_cast<Value>(castedPtr));
+    rewriter.replaceOp(op, static_cast<Value>(allocatedPtr));
     //qConstant.replaceAllUsesWith(lastValue);
     LLVM_DEBUG({
       ::llvm::outs() << "after\n";

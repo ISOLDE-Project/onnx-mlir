@@ -104,12 +104,11 @@ void AISMEMToAISLLVMLoweringPass::runOnOperation() {
 
   // We define the specific operations, or dialects, that are legal targets for
   // this lowering.
-  target.addLegalDialect<arith::ArithDialect, linalg::LinalgDialect,mlir::func::FuncDialect,mlir::KrnlDialect,
-      math::MathDialect, shape::ShapeDialect>();
+  target.addLegalDialect<mlir::func::FuncDialect>();
   target.addLegalDialect<LLVM::LLVMDialect>();
-  target.addLegalDialect<spade::AISLLVMDialect>();
-  target.addLegalOp<ModuleOp>();
-  target.addLegalOp<mlir::UnrealizedConversionCastOp>();
+  //target.addLegalDialect<spade::AISLLVMDialect>();
+  //target.addLegalOp<ModuleOp>();
+  //target.addLegalOp<mlir::UnrealizedConversionCastOp>();
 
   RewritePatternSet patterns(&getContext());
 
