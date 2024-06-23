@@ -21,6 +21,7 @@
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/LogicalResult.h"
 #include "patterns.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -114,11 +115,11 @@ void AISMEMToLLVMLoweringPass::runOnOperation() {
   // With the target and rewrite patterns defined, we can now attempt the
   // conversion. The conversion will signal failure if any of our `illegal`
   // operations were not converted successfully.
-  llvm::outs() << "-----------\n";
+  llvm::errs() << "-- spade::AISMEMToLLVMLoweringPass::runOnOperation() ---------\n";
   module->dump();
-  llvm::outs() << "-----------\n";
-  auto passResult = applyPartialConversion(module, target, std::move(patterns));
-  llvm::outs() << "-----------\n";
+  llvm::errs() << "-----------\n";
+  LogicalResult passResult = applyPartialConversion(module, target, std::move(patterns));
+  llvm::errs() << "++ spade::AISMEMToLLVMLoweringPass::runOnOperation(): "<< succeeded(passResult) <<"---------\n";
   module->dump();
   llvm::outs() << "-----------\n";
 

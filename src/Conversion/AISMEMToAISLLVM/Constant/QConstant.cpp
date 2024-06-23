@@ -12,15 +12,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/DialectResourceBlobManager.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LogicalResult.h"
 #include "src/Dialect/AISMEM/AISMEMOps.hpp"
-#include "src/Dialect/Mlir/DialectBuilder.hpp"
 #include "src/Support/SpadeSupport.hpp"
 #include "llvm/ADT/APInt.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
 #include <cstdint>
 #include <string>
@@ -102,15 +101,50 @@ public:
         lastValue.dump();
       });
     }
-     
-     auto ptrType = LLVM::LLVMPointerType::get(op->getContext());
+
+    mlir::UnrealizedConversionCastOp castOp;
+    LLVM::ExtractValueOp extractValueOp;
+    LLVM::ReturnOp returnOp;
+
+    for (auto *user : op->getUsers()) {
+      castOp = llvm::dyn_cast<mlir::UnrealizedConversionCastOp>(user);
+      if (castOp)
+        break;
+    }
+
+    if (castOp) {
+      for (auto *user : castOp->getUsers()) {
+        extractValueOp = llvm::dyn_cast<LLVM::ExtractValueOp>(user);
+        if (extractValueOp)
+          break;
+      }
+    }
+
+    if (extractValueOp) {
+      for (auto *user : extractValueOp->getUsers()) {
+        returnOp = llvm::dyn_cast<LLVM::ReturnOp>(user);
+        if (returnOp)
+          break;
+      }
+    }
+
+    if (!returnOp) {
+      rewriter.replaceOp(op, {lastValue});
+    } else {
+
+      auto ptrType = LLVM::LLVMPointerType::get(op->getContext());
       Value size = rewriter.create<LLVM::ConstantOp>(loc, globalType, 64);
-    auto allocatedPtr = rewriter.create<LLVM::AllocaOp>(loc, ptrType, vectorType, size, 16);
-    rewriter.create<LLVM::StoreOp>(loc, lastValue, allocatedPtr);
-    //auto castedPtr = rewriter.create<LLVM::BitcastOp>(loc, ptrType, allocatedPtr);
-    //rewriter.replaceOp(op, {lastValue});
-    rewriter.replaceOp(op, static_cast<Value>(allocatedPtr));
-    qConstant.replaceAllUsesWith(static_cast<Value>(allocatedPtr));
+      auto allocatedPtr =
+          rewriter.create<LLVM::AllocaOp>(loc, ptrType, vectorType, size, 16);
+      rewriter.create<LLVM::StoreOp>(loc, lastValue, allocatedPtr);
+      rewriter.replaceOp(op, static_cast<Value>(allocatedPtr));
+      SmallVector<Value, 4> newOperands(returnOp->getOperands());
+      newOperands[0] = allocatedPtr;
+      rewriter.replaceOpWithNewOp<LLVM::ReturnOp>(returnOp, newOperands);
+      rewriter.eraseOp(extractValueOp);
+      rewriter.eraseOp(castOp);
+    }
+
     LLVM_DEBUG({
       ::llvm::outs() << "after\n";
       spade::dumpBlock(op);
