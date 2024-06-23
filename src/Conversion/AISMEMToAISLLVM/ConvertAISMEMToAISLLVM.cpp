@@ -16,6 +16,10 @@
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Pass/Pass.h"
 #include "patterns.h"
@@ -39,6 +43,7 @@
 #include <tuple>
 
 #include "src/Conversion/AISMEMToAISLLVM/AISMEMToAISLLVMCommon.hpp"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 using std::nullopt;
@@ -48,15 +53,6 @@ namespace spade {
 
 void populateAISMEMToAISLLVMConversionPattern(RewritePatternSet &patterns,
     LLVMTypeConverter &typeConverter, MLIRContext *ctx) {
-
- 
-  mlir::populateAffineToStdConversionPatterns(patterns);
-  mlir::populateSCFToControlFlowConversionPatterns(patterns);
-
-  populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
-      patterns, typeConverter);
-  populateCallOpTypeConversionPattern(patterns, typeConverter);
-  populateReturnOpTypeConversionPattern(patterns, typeConverter);
   ///
   onnx_mlir::krnl::populateLoweringKrnlGlobalOpPattern(
       typeConverter, patterns, ctx);
@@ -68,6 +64,57 @@ void populateAISMEMToAISLLVMConversionPattern(RewritePatternSet &patterns,
   populateAISMEMQConstantOpPattern(typeConverter, patterns, ctx);
 
   populateLoweringAISMEMGEMMOpPattern(patterns, typeConverter, ctx);
+}
+
+void populateAffineToAISLLVMConversionPattern(RewritePatternSet &patterns,
+    LLVMTypeConverter &typeConverter, MLIRContext *ctx) {
+
+  /*
+   * copy from onnx_mlir::krnl::populateAffineAndKrnlToLLVMConversion()
+   * TODO: clean-up/re-evaluate later
+   */
+
+#ifdef SPADE_VECTOR_FEAT
+  // TODO: look at what is done in
+  // mlir/lib/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.cpp in function
+  // LowerVectorToLLVMPass::runOnOperation() and see what we should do about it.
+  // They run it in two steps, and add additional lowerings.
+
+  vector::populateVectorToVectorCanonicalizationPatterns(patterns);
+  vector::populateVectorBroadcastLoweringPatterns(patterns);
+  vector::populateVectorContractLoweringPatterns(
+      patterns, vector::VectorTransformsOptions());
+  vector::populateVectorTransposeLoweringPatterns(
+      patterns, vector::VectorTransformsOptions());
+#endif
+
+  populateAffineToStdConversionPatterns(patterns);
+  populateSCFToControlFlowConversionPatterns(patterns);
+
+#ifdef SPADE_VECTOR_FEAT
+  populateShapeToStandardConversionPatterns(patterns);
+  populateVectorToLLVMMatrixConversionPatterns(typeConverter, patterns);
+  populateVectorToLLVMConversionPatterns(typeConverter, patterns);
+  populateVectorToLLVMMatrixConversionPatterns(typeConverter, patterns);
+  memref::populateExpandOpsPatterns(patterns);
+  // Use polynomial approximation for math.{tanh, sin, cos and exp} for better
+  // performance.
+  populateMathPolynomialApproximationPatterns(patterns);
+  arith::populateArithExpandOpsPatterns(patterns);
+  populateMathToLLVMConversionPatterns(typeConverter, patterns);
+#endif
+  populateFuncToLLVMConversionPatterns(typeConverter, patterns);
+  populateFinalizeMemRefToLLVMConversionPatterns(typeConverter, patterns);
+#ifdef SPADE_OPENMP_FEAT
+  // Enable OpenMP-to-LLVM pass when enable parallelism
+  if (enableParallel) {
+    populateOpenMPToLLVMConversionPatterns(typeConverter, patterns);
+  }
+#endif
+  arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
+  cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
+
+  populateReconcileUnrealizedCastsPatterns(patterns);
 }
 
 //===----------------------------------------------------------------------===//
@@ -96,51 +143,65 @@ public:
 };
 
 void AISMEMToAISLLVMLoweringPass::runOnOperation() {
+  /*
+   * copy from ConvertKrnlToLLVMPass::runOnOperation()
+   * TODO: clean-up/re-evaluate later
+   */
   ModuleOp module = getOperation();
+  MLIRContext *ctx = &getContext();
+  // OpBuilder builder(ctx);
+  // const auto &dataLayoutAnalysis = getAnalysis<DataLayoutAnalysis>();
+  // LowerToLLVMOptions options(ctx, dataLayoutAnalysis.getAtOrAbove(module));
 
-  // The first thing to define is the conversion target. This will define the
-  // final target for this lowering.
-  ConversionTarget target(getContext());
-
-  // We define the specific operations, or dialects, that are legal targets for
-  // this lowering.
-  target.addLegalDialect<mlir::func::FuncDialect>();
+  // Define the target for this lowering i.e. the LLVM dialect.
+  ConversionTarget target(*ctx);
   target.addLegalDialect<LLVM::LLVMDialect>();
-  //target.addLegalDialect<spade::AISLLVMDialect>();
-  //target.addLegalOp<ModuleOp>();
-  //target.addLegalOp<mlir::UnrealizedConversionCastOp>();
+  target.addLegalOp<ModuleOp>();
+  target.addLegalOp<UnrealizedConversionCastOp>();
 
-  RewritePatternSet patterns(&getContext());
+  LowerToLLVMOptions options(ctx);
+  //options.allocLowering = LowerToLLVMOptions::AllocLowering::None;
+  //options.useBarePtrCallConv = true;
 
-  LowerToLLVMOptions options(&getContext());
-  options.allocLowering = LowerToLLVMOptions::AllocLowering::None;
-  options.useBarePtrCallConv = true;
   spade::AISMEMTypeConverter typeConverter(&getContext(), options);
 
-  target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
-    // FuncOp is legal only if types have been converted to Std types.
-    return typeConverter.isSignatureLegal(op.getFunctionType());
-  });
+  // target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
+  //   // FuncOp is legal only if types have been converted to Std types.
+  //   return typeConverter.isSignatureLegal(op.getFunctionType());
+  // });
 
-  target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
-    // CallOp is legal only if types have been converted to Std types.
-    return typeConverter.isLegal(op);
-  });
+  // target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
+  //   // CallOp is legal only if types have been converted to Std types.
+  //   return typeConverter.isLegal(op);
+  // });
 
-  // Operations that are legal only if types are not tensors.
-  target.addDynamicallyLegalOp<mlir::func::ReturnOp>([&](Operation *op) {
-    return llvm::none_of(op->getOperandTypes(),
-        [](Type type) { return type.isa<MemRefType>(); });
-  });
+  // // Operations that are legal only if types are not tensors.
+  // target.addDynamicallyLegalOp<mlir::func::ReturnOp>([&](Operation *op) {
+  //   return llvm::none_of(op->getOperandTypes(),
+  //       [](Type type) { return type.isa<MemRefType>(); });
+  // });
 
+  RewritePatternSet patterns(ctx);
   // Define patterns.
+
+  populateAffineToAISLLVMConversionPattern(
+      patterns, typeConverter, &getContext());
+
   populateAISMEMToAISLLVMConversionPattern(
       patterns, typeConverter, &getContext());
 
   // With the target and rewrite patterns defined, we can now attempt the
   // conversion. The conversion will signal failure if any of our `illegal`
   // operations were not converted successfully.
-  if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
+  llvm::outs()<<"-----------\n";
+  module->dump();
+  llvm::outs()<<"-----------\n";
+  auto passResult= applyPartialConversion(module, target, std::move(patterns));
+  llvm::outs()<<"-----------\n";
+  module->dump();
+  llvm::outs()<<"-----------\n";
+
+  if (failed(passResult)) {
     signalPassFailure();
   }
 }

@@ -197,3 +197,4 @@ compile_commands.json
 *.spade.*
 *.tmp
 .clangd
+graph.*

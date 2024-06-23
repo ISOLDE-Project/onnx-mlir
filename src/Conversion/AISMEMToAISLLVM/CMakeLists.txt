@@ -5,6 +5,7 @@
 add_onnx_mlir_library(OMAISMEMToAISLLVM
   Constant/QConstant.cpp
   Krnl/KrnlEntryPoint.cpp
+  Krnl/ConvertKrnlToLLVM.cpp
   Math/GEMM.cpp
   Memref/AllocOp.cpp
   ConvertAISMEMToAISLLVM.cpp
