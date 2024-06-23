@@ -27,13 +27,12 @@
 #include "mlir/Dialect/Shape/IR/Shape.h"
 
 #include "mlir/Transforms/DialectConversion.h"
+#include "src/Conversion/AISMEMToAISLLVM/AISMEMToLLVMCommon.hpp"
 #include "src/Dialect/AISLLVM/AISLLVMDialect.hpp"
 #include "src/Dialect/AISMEM/AISMEMDialect.hpp"
 #include "src/Dialect/AISMEM/AISMEMOps.hpp"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
 #include <tuple>
-
-#include "src/Conversion/AISMEMToAISLLVM/AISMEMToAISLLVMCommon.hpp"
 
 using namespace mlir;
 

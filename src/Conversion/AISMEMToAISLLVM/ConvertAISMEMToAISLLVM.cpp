@@ -2,8 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//===--------------- ConvertAISMEMToAISLLVM.cpp - Lowering to AISLLVM patterns
-//-------------------===//
+//===-- ConvertAISMEMToAISLLVM.cpp - Lowering to AISLLVM patterns --------===//
 //  Following dialects are lowered:
 //   -  Krnl
 //   -  MemRef
@@ -13,13 +12,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
-#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
-#include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
-#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
-#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
+#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Pass/Pass.h"
 #include "patterns.h"
@@ -42,7 +41,7 @@
 #include <optional>
 #include <tuple>
 
-#include "src/Conversion/AISMEMToAISLLVM/AISMEMToAISLLVMCommon.hpp"
+#include "src/Conversion/AISMEMToAISLLVM/AISMEMToLLVMCommon.hpp"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -51,98 +50,40 @@ using std::optional;
 
 namespace spade {
 
-void populateAISMEMToAISLLVMConversionPattern(RewritePatternSet &patterns,
+void populateAISMEMToLLVMConversionPattern(RewritePatternSet &patterns,
     LLVMTypeConverter &typeConverter, MLIRContext *ctx) {
-  ///
-  onnx_mlir::krnl::populateLoweringKrnlGlobalOpPattern(
-      typeConverter, patterns, ctx);
-
-  populateLoweringKrnlEntryPointOpPattern(patterns, typeConverter, ctx);
-  // AllocOp
-  populateMemrefAllocOpPattern(typeConverter, patterns, ctx);
+  
   // QConstant
   populateAISMEMQConstantOpPattern(typeConverter, patterns, ctx);
 
-  populateLoweringAISMEMGEMMOpPattern(patterns, typeConverter, ctx);
-}
-
-void populateAffineToAISLLVMConversionPattern(RewritePatternSet &patterns,
-    LLVMTypeConverter &typeConverter, MLIRContext *ctx) {
-
-  /*
-   * copy from onnx_mlir::krnl::populateAffineAndKrnlToLLVMConversion()
-   * TODO: clean-up/re-evaluate later
-   */
-
-#ifdef SPADE_VECTOR_FEAT
-  // TODO: look at what is done in
-  // mlir/lib/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.cpp in function
-  // LowerVectorToLLVMPass::runOnOperation() and see what we should do about it.
-  // They run it in two steps, and add additional lowerings.
-
-  vector::populateVectorToVectorCanonicalizationPatterns(patterns);
-  vector::populateVectorBroadcastLoweringPatterns(patterns);
-  vector::populateVectorContractLoweringPatterns(
-      patterns, vector::VectorTransformsOptions());
-  vector::populateVectorTransposeLoweringPatterns(
-      patterns, vector::VectorTransformsOptions());
-#endif
-
-  populateAffineToStdConversionPatterns(patterns);
-  populateSCFToControlFlowConversionPatterns(patterns);
-
-#ifdef SPADE_VECTOR_FEAT
-  populateShapeToStandardConversionPatterns(patterns);
-  populateVectorToLLVMMatrixConversionPatterns(typeConverter, patterns);
-  populateVectorToLLVMConversionPatterns(typeConverter, patterns);
-  populateVectorToLLVMMatrixConversionPatterns(typeConverter, patterns);
-  memref::populateExpandOpsPatterns(patterns);
-  // Use polynomial approximation for math.{tanh, sin, cos and exp} for better
-  // performance.
-  populateMathPolynomialApproximationPatterns(patterns);
-  arith::populateArithExpandOpsPatterns(patterns);
-  populateMathToLLVMConversionPatterns(typeConverter, patterns);
-#endif
-  populateFuncToLLVMConversionPatterns(typeConverter, patterns);
-  populateFinalizeMemRefToLLVMConversionPatterns(typeConverter, patterns);
-#ifdef SPADE_OPENMP_FEAT
-  // Enable OpenMP-to-LLVM pass when enable parallelism
-  if (enableParallel) {
-    populateOpenMPToLLVMConversionPatterns(typeConverter, patterns);
-  }
-#endif
-  arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
-  cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
-
-  populateReconcileUnrealizedCastsPatterns(patterns);
 }
 
 //===----------------------------------------------------------------------===//
-// AISMEM to AISMEM Dialect lowering pass
+// AISMEM to LLVMIR Dialect lowering pass
 //===----------------------------------------------------------------------===//
 
 /// This is a partial lowering to Krnl loops of the ONNX operations.
-struct AISMEMToAISLLVMLoweringPass
-    : public PassWrapper<AISMEMToAISLLVMLoweringPass, OperationPass<ModuleOp>> {
+struct AISMEMToLLVMLoweringPass
+    : public PassWrapper<AISMEMToLLVMLoweringPass, OperationPass<ModuleOp>> {
 
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AISMEMToAISLLVMLoweringPass)
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AISMEMToLLVMLoweringPass)
 
-  StringRef getArgument() const override { return "convert-aismem-to-aisllvm"; }
+  StringRef getArgument() const override { return "convert-aismem-to-llvmir"; }
 
   StringRef getDescription() const override {
-    return "Lower (some)AISMEM ops to AISLLVM dialect.";
+    return "Lower (some)AISMEM ops to LLVM dialect.";
   }
 
   // Make sure that we have a valid default constructor and copy
   // constructor to make sure that the options are initialized properly.
-  AISMEMToAISLLVMLoweringPass() = default;
+  AISMEMToLLVMLoweringPass() = default;
 
   void runOnOperation() final;
 
 public:
 };
 
-void AISMEMToAISLLVMLoweringPass::runOnOperation() {
+void AISMEMToLLVMLoweringPass::runOnOperation() {
   /*
    * copy from ConvertKrnlToLLVMPass::runOnOperation()
    * TODO: clean-up/re-evaluate later
@@ -160,46 +101,26 @@ void AISMEMToAISLLVMLoweringPass::runOnOperation() {
   target.addLegalOp<UnrealizedConversionCastOp>();
 
   LowerToLLVMOptions options(ctx);
-  //options.allocLowering = LowerToLLVMOptions::AllocLowering::None;
-  //options.useBarePtrCallConv = true;
+  options.allocLowering = LowerToLLVMOptions::AllocLowering::None;
+  options.useBarePtrCallConv = true;
 
   spade::AISMEMTypeConverter typeConverter(&getContext(), options);
 
-  // target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
-  //   // FuncOp is legal only if types have been converted to Std types.
-  //   return typeConverter.isSignatureLegal(op.getFunctionType());
-  // });
-
-  // target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
-  //   // CallOp is legal only if types have been converted to Std types.
-  //   return typeConverter.isLegal(op);
-  // });
-
-  // // Operations that are legal only if types are not tensors.
-  // target.addDynamicallyLegalOp<mlir::func::ReturnOp>([&](Operation *op) {
-  //   return llvm::none_of(op->getOperandTypes(),
-  //       [](Type type) { return type.isa<MemRefType>(); });
-  // });
-
   RewritePatternSet patterns(ctx);
+
   // Define patterns.
-
-  populateAffineToAISLLVMConversionPattern(
-      patterns, typeConverter, &getContext());
-
-  populateAISMEMToAISLLVMConversionPattern(
-      patterns, typeConverter, &getContext());
+  populateAISMEMToLLVMConversionPattern(patterns, typeConverter, &getContext());
 
   // With the target and rewrite patterns defined, we can now attempt the
   // conversion. The conversion will signal failure if any of our `illegal`
   // operations were not converted successfully.
-  llvm::outs()<<"-----------\n";
+  llvm::outs() << "-----------\n";
   module->dump();
-  llvm::outs()<<"-----------\n";
-  auto passResult= applyPartialConversion(module, target, std::move(patterns));
-  llvm::outs()<<"-----------\n";
+  llvm::outs() << "-----------\n";
+  auto passResult = applyPartialConversion(module, target, std::move(patterns));
+  llvm::outs() << "-----------\n";
   module->dump();
-  llvm::outs()<<"-----------\n";
+  llvm::outs() << "-----------\n";
 
   if (failed(passResult)) {
     signalPassFailure();
@@ -207,7 +128,7 @@ void AISMEMToAISLLVMLoweringPass::runOnOperation() {
 }
 
 std::unique_ptr<Pass> createLowerToLLVMIRPass() {
-  return std::make_unique<AISMEMToAISLLVMLoweringPass>();
+  return std::make_unique<AISMEMToLLVMLoweringPass>();
 }
 
 } // namespace spade

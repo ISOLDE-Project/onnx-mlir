@@ -25,7 +25,7 @@
 #include <cstdint>
 #include <string>
 
-#define DEBUG_TYPE "AISMEMToAISLLVM_QConstant"
+#define DEBUG_TYPE "AISMEMToLLVM_QConstant"
 
 using namespace mlir;
 
@@ -110,7 +110,7 @@ public:
     //auto castedPtr = rewriter.create<LLVM::BitcastOp>(loc, ptrType, allocatedPtr);
     //rewriter.replaceOp(op, {lastValue});
     rewriter.replaceOp(op, static_cast<Value>(allocatedPtr));
-    //qConstant.replaceAllUsesWith(lastValue);
+    qConstant.replaceAllUsesWith(static_cast<Value>(allocatedPtr));
     LLVM_DEBUG({
       ::llvm::outs() << "after\n";
       spade::dumpBlock(op);

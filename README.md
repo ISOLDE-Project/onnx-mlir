@@ -17,7 +17,12 @@ make compiler
 ```
 which call **cmake** to build onnx-mlir using whatever build files are available.  
 
-
+# Testing 
+## 1. test-isolde/gemm/constant.mlir
+Example:
+```
+make  ONNX_MODEL=constant.mlir  ONNX_MLIR_FLAGS=--debug-only=AISMEMToAISLLVM_QConstant  test-all
+```
 <p align="center"><img width="50%" src="docs/logo/onnx-mlir-1280x640.png" /></p>
 
 # ONNX-MLIR

@@ -171,7 +171,7 @@ void addKrnlToLLVMPasses(
       onnx_mlir::constantsToFileSingleThreshold,
       onnx_mlir::constantsToFileTotalThreshold, outputNameNoExt,
       onnx_mlir::enableParallel));
-  //pm.addPass(spade::createLowerToLLVMIRPass());
+  pm.addPass(spade::createLowerToLLVMIRPass());
  // pm.addPass(spade_2::createLowerToLLVMIRPass());
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
   pm.addPass(mlir::createCanonicalizerPass());

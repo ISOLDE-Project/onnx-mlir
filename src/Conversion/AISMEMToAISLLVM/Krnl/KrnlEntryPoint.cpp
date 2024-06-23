@@ -57,8 +57,8 @@ public:
   }
 };
 
-void populateLoweringKrnlEntryPointOpPattern(RewritePatternSet &patterns,
-    LLVMTypeConverter &typeConverter, MLIRContext *ctx) {
+void populateLoweringKrnlEntryPointOpPattern(LLVMTypeConverter &typeConverter,
+    RewritePatternSet &patterns, MLIRContext *ctx) {
   patterns.insert<KrnlEntryPointOpLowering>(typeConverter, ctx);
 }
 

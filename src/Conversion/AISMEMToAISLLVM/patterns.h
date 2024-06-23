@@ -21,8 +21,6 @@ namespace spade {
 
 void populateAISMEMQConstantOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);
-void populateLoweringKrnlEntryPointOpPattern(RewritePatternSet &patterns,
-    LLVMTypeConverter &typeConverter, MLIRContext *ctx);
 
 void populateMemrefAllocOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);
