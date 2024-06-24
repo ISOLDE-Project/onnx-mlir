@@ -42,7 +42,7 @@
 #include <optional>
 #include <tuple>
 
-#include "src/Conversion/AISMEMToAISLLVM/AISMEMToLLVMCommon.hpp"
+#include "src/Conversion/AISMEMToLLVM/AISMEMToLLVMCommon.hpp"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;

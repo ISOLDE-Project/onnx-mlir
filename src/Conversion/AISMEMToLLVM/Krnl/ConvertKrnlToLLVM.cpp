@@ -13,8 +13,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <fstream>
-
 #include "mlir/Analysis/DataLayoutAnalysis.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -56,8 +54,8 @@
 
 #include "onnx/onnx_pb.h"
 
-#include "src/Conversion/AISMEMToAISLLVM/Krnl/ConvertKrnlToLLVM.hpp"
-#include "src/Conversion/AISMEMToAISLLVM/AISMEMToLLVMCommon.hpp"
+#include "src/Conversion/AISMEMToLLVM/AISMEMToLLVMCommon.hpp"
+#include "src/Conversion/AISMEMToLLVM/Krnl/ConvertKrnlToLLVM.hpp"
 #include "src/Conversion/KrnlToLLVM/KrnlToLLVMHelper.hpp"
 #include "src/Conversion/KrnlToLLVM/RuntimeAPI.hpp"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
@@ -74,9 +72,9 @@ using namespace mlir;
 namespace spade {
 namespace krnl {
 
-//std::string EXTERNAL_CONSTANT_PREFIX = "om_external_constant_ex";
+// std::string EXTERNAL_CONSTANT_PREFIX = "om_external_constant_ex";
 
-//uint64_t KRNL_ENTRY_POINT_ID = 0;
+// uint64_t KRNL_ENTRY_POINT_ID = 0;
 
 void populateAffineAndKrnlToLLVMConversion(RewritePatternSet &patterns,
     LLVMTypeConverter &typeConverter, MLIRContext *ctx,
@@ -87,7 +85,6 @@ void populateAffineAndKrnlToLLVMConversion(RewritePatternSet &patterns,
     std::map<std::string, SmallVector<MemRefType, 4>> &inputMemRefTypes,
     std::map<std::string, SmallVector<MemRefType, 4>> &outputMemRefTypes,
     bool verifyInputTensors, bool enableParallel) {
-
 
   populateAffineToStdConversionPatterns(patterns);
   populateSCFToControlFlowConversionPatterns(patterns);
@@ -102,8 +99,6 @@ void populateAffineAndKrnlToLLVMConversion(RewritePatternSet &patterns,
       constantOutputs, singleEntryPoint, entryGlobalOps, inSigGlobalOps,
       outSigGlobalOps, inputMemRefTypes, outputMemRefTypes, verifyInputTensors);
 }
-
-
 
 //===----------------------------------------------------------------------===//
 // Krnl Dialect lowering pass
@@ -190,13 +185,11 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext *ctx = &getContext();
   OpBuilder builder(ctx);
-  //const auto &dataLayoutAnalysis = getAnalysis<DataLayoutAnalysis>();
-  LowerToLLVMOptions options(ctx/*, dataLayoutAnalysis.getAtOrAbove(module)*/);
-  
+  // const auto &dataLayoutAnalysis = getAnalysis<DataLayoutAnalysis>();
+  LowerToLLVMOptions options(ctx /*, dataLayoutAnalysis.getAtOrAbove(module)*/);
 
   options.allocLowering = LowerToLLVMOptions::AllocLowering::None;
   options.useBarePtrCallConv = true;
-
 
   // Global Op for entry point names and their input/output JSON signatures,
   // those will generated when lowering KrnlEntryPoint.
@@ -212,7 +205,8 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   // enabled.
   std::map<std::string, SmallVector<MemRefType, 4>> inputMemRefTypes;
   std::map<std::string, SmallVector<MemRefType, 4>> outputMemRefTypes;
-  onnx_mlir::krnl::recordInputOutputMemRefTypes(module, inputMemRefTypes, outputMemRefTypes);
+  onnx_mlir::krnl::recordInputOutputMemRefTypes(
+      module, inputMemRefTypes, outputMemRefTypes);
 
   // Determine whether the module has a single entry point or not.
   bool singleEntryPoint = onnx_mlir::krnl::hasSingleEntryPoint(module);
@@ -220,7 +214,8 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   // Determine whether an output OMTensor should own the underlying buffer or
   // not.
   SmallVector<bool, 4> outputOMTensorOwnerships;
-  onnx_mlir::krnl::determineOwnershipForOutputOMTensors(module, outputOMTensorOwnerships);
+  onnx_mlir::krnl::determineOwnershipForOutputOMTensors(
+      module, outputOMTensorOwnerships);
 
   // If storeConstantsToFile, copy constants from GlobalOp and write to a single
   // file.
@@ -228,8 +223,8 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   // The total size of contants must be greater than totalThreshold.
   std::string fname = outputNameNoExt + ".constants.bin";
   if (storeConstantsToFile) {
-    storeConstantsToFile = onnx_mlir::krnl::extractConstantsToFile(module, fname,
-        (uint64_t)constantsToFileSingleThreshold * 1024,
+    storeConstantsToFile = onnx_mlir::krnl::extractConstantsToFile(module,
+        fname, (uint64_t)constantsToFileSingleThreshold * 1024,
         (uint64_t)constantsToFileTotalThreshold * 1024 * 1024 * 1024);
   }
 
@@ -241,11 +236,11 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   }
 #else
   for (auto funcOp : module.getOps<func::FuncOp>()) {
-       if (funcOp->hasAttr("llvm.emit_c_interface")) {
-        funcOp->removeAttr("llvm.emit_c_interface");
-      }
+    if (funcOp->hasAttr("llvm.emit_c_interface")) {
+      funcOp->removeAttr("llvm.emit_c_interface");
+    }
   }
-#endif  
+#endif
 
   // Define the target for this lowering i.e. the LLVM dialect.
   ConversionTarget target(*ctx);
@@ -258,7 +253,7 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   // Convert types to legal types for the LLVM dialect.
   LLVMTypeConverter typeConverter(ctx, options);
   onnx_mlir::krnl::customizeTypeConverter(typeConverter);
-  //spade::AISMEMTypeConverter typeConverter(&getContext(), options);
+  // spade::AISMEMTypeConverter typeConverter(&getContext(), options);
 
   // omp::ParallelOp can only be legalized when its region is legal
   target.addDynamicallyLegalOp<omp::ParallelOp, omp::WsLoopOp>(

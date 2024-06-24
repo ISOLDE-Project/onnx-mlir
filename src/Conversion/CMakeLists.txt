@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_subdirectory(AISLEToAISMEM)
-add_subdirectory(AISMEMToAISLLVM)
+add_subdirectory(AISMEMToLLVM)
 add_subdirectory(KrnlSeqToMemref)
 add_subdirectory(KrnlToAffine)
 add_subdirectory(KrnlToLLVM)

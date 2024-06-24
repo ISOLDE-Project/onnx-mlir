@@ -2,14 +2,13 @@
 
 
 # Please keep in alphabetical order.
-add_onnx_mlir_library(OMAISMEMToAISLLVM
+add_onnx_mlir_library(OMAISMEMToLLVM
   Constant/QConstant.cpp
   Krnl/KrnlEntryPoint.cpp
   Krnl/ConvertKrnlToLLVM.cpp
   Math/GEMM.cpp
   Memref/AllocOp.cpp
-  ConvertAISMEMToAISLLVM.cpp
-  ConvertAISMEMToAISLLVM2.cpp
+  ConvertAISMEMToLLVM.cpp
   
   LINK_LIBS PUBLIC
   
