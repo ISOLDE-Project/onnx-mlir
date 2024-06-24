@@ -22,6 +22,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -34,14 +35,13 @@
 
 #include "src/Support/logger.hpp"
 
-
-#define DEBUG_TYPE "AISMEMToAISLLVM_AllocOP"
+#define DEBUG_TYPE "AISMEMToLLVM_AllocOP"
 
 using namespace mlir;
 
 namespace spade {
 
-DECLARE_LOGGER(MemManager,MemManager.yaml)
+DECLARE_LOGGER(MemManager, MemManager.yaml)
 
 using AllocOp = memref::AllocOp;
 
@@ -75,20 +75,20 @@ public:
       ConversionPatternRewriter &rewriter) const override {
     auto allocOp = llvm::dyn_cast<AllocOp>(op);
     Location loc = allocOp.getLoc();
-    mlir::MLIRContext * ctx= op->getContext();
-{
+    mlir::MLIRContext *ctx = op->getContext();
+    {
       std::ostringstream asc;
-      asc<<"---\n";
+      asc << "---\n";
       MemManager::getInstance().header(asc);
-}
+    }
     LLVM::LLVMFuncOp memFunc = nullptr;
     {
       ModuleOp module = op->getParentOfType<ModuleOp>();
       // auto *context = module.getContext();
       auto funcName = StringRef(reserveFuncName);
-      //const Type type = allocOp->getResult(0).getType();
-      //const MemRefType memRefTy = type.cast<mlir::MemRefType>();
-      //const Type elementType =
+      // const Type type = allocOp->getResult(0).getType();
+      // const MemRefType memRefTy = type.cast<mlir::MemRefType>();
+      // const Type elementType =
       //    typeConverter->convertType(memRefTy.getElementType());
       auto retType = LLVM::LLVMPointerType::get(ctx);
       memFunc = getSymbol(module, rewriter, allocOp, retType, funcName);
@@ -104,8 +104,51 @@ public:
     ValueRange args = {arg0};
     auto newCallOp = rewriter.create<LLVM::CallOp>(loc, memFunc, args);
 
-    rewriter.replaceOp(op, {newCallOp.getODSResults(0)});
+    mlir::UnrealizedConversionCastOp castOp;
+    LLVM::ExtractValueOp extractValueOp;
+    LLVM::ReturnOp returnOp;
 
+    for (auto *user : op->getUsers()) {
+      castOp = llvm::dyn_cast<mlir::UnrealizedConversionCastOp>(user);
+      if (castOp)
+        break;
+    }
+
+    if (castOp) {
+      for (auto *user : castOp->getUsers()) {
+        extractValueOp = llvm::dyn_cast<LLVM::ExtractValueOp>(user);
+        if (extractValueOp)
+          break;
+      }
+    }
+
+    if (extractValueOp) {
+      for (auto *user : extractValueOp->getUsers()) {
+        returnOp = llvm::dyn_cast<LLVM::ReturnOp>(user);
+        if (returnOp)
+          break;
+      }
+    }
+
+    LLVM_DEBUG({
+      llvm::errs()
+          << "-- Before update in AllocOpLowering::matchAndRewrite() --\n";
+      spade::dumpBlock(op);
+      llvm::errs() << "---\n";
+    });
+    SmallVector<Value, 4> newValues(
+        newCallOp->getResults().begin(), newCallOp->getResults().end());
+
+    // rewriter.replaceOp(op, {newCallOp.getODSResults(0)});
+    rewriter.replaceOp(op, newValues);
+    if (returnOp) {
+
+      rewriter.replaceOpWithNewOp<LLVM::ReturnOp>(returnOp, newValues);
+
+      // Erase intermediate operations
+      rewriter.eraseOp(extractValueOp);
+      rewriter.eraseOp(castOp);
+    }
     {
       std::ostringstream asc;
       const Type type = allocOp->getResult(0).getType();
@@ -129,25 +172,30 @@ public:
             allocOp, retType, StringRef(releaseFuncName));
         if (!memFunc)
           return failure();
-         ValueRange args = {arg0};
+        ValueRange args = {arg0};
         auto newCallOp = rewriter.create<LLVM::CallOp>(loc, memFunc, args);
         newCallOp->moveBefore(deallocOp);
         // rewriter.replaceOp(deallocOp, {newCallOp.getODSResults(0)});
         rewriter.eraseOp(deallocOp);
       }
     }
-     LLVM_DEBUG({ spade::dumpBlock(op); });
+    LLVM_DEBUG({
+      llvm::errs()
+          << "-- After update in AllocOpLowering::matchAndRewrite() --\n";
+      spade::dumpBlock(op);
+      llvm::errs() << "---\n";
+    });
 
     return success();
   }
 
 private:
-  inline static int32_t hashValue=0;
-  inline static std::string reserveFuncName="_reserveMemory";
-  inline static std::string releaseFuncName="_releaseMemory";
+  inline static int32_t hashValue = 0;
+  inline static std::string reserveFuncName = "_reserveMemory";
+  inline static std::string releaseFuncName = "_releaseMemory";
 };
 
-//int32_t AllocOpLowering::hashValue = 21;
+// int32_t AllocOpLowering::hashValue = 21;
 
 void populateMemrefAllocOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx) {

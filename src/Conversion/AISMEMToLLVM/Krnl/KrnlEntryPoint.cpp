@@ -29,7 +29,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/JSON.h"
 
-#define DEBUG_TYPE "AISMEMToAISLLVM_KrnlEntryPoint"
+#define DEBUG_TYPE "AISMEMToLLVM_KrnlEntryPoint"
 
 using namespace mlir;
 

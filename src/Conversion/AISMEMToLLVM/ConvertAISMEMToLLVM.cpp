@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//===-- ConvertAISMEMToAISLLVM.cpp - Lowering to AISLLVM patterns --------===//
+//===-- ConvertAISMEMToLLVM.cpp - Lowering to LLVM patterns --------===//
 //  Following dialects are lowered:
 //   -  Krnl
 //   -  MemRef
@@ -53,10 +53,11 @@ namespace spade {
 
 void populateAISMEMToLLVMConversionPattern(RewritePatternSet &patterns,
     LLVMTypeConverter &typeConverter, MLIRContext *ctx) {
-  
+
   // QConstant
   populateAISMEMQConstantOpPattern(typeConverter, patterns, ctx);
-
+  // memref.alloc
+  populateMemrefAllocOpPattern(typeConverter, patterns, ctx);
 }
 
 //===----------------------------------------------------------------------===//
@@ -115,11 +116,14 @@ void AISMEMToLLVMLoweringPass::runOnOperation() {
   // With the target and rewrite patterns defined, we can now attempt the
   // conversion. The conversion will signal failure if any of our `illegal`
   // operations were not converted successfully.
-  llvm::errs() << "-- spade::AISMEMToLLVMLoweringPass::runOnOperation() ---------\n";
+  llvm::errs()
+      << "-- spade::AISMEMToLLVMLoweringPass::runOnOperation() ---------\n";
   module->dump();
   llvm::errs() << "-----------\n";
-  LogicalResult passResult = applyPartialConversion(module, target, std::move(patterns));
-  llvm::errs() << "++ spade::AISMEMToLLVMLoweringPass::runOnOperation(): "<< succeeded(passResult) <<"---------\n";
+  LogicalResult passResult =
+      applyPartialConversion(module, target, std::move(patterns));
+  llvm::errs() << "++ spade::AISMEMToLLVMLoweringPass::runOnOperation(): "
+               << succeeded(passResult) << "---------\n";
   module->dump();
   llvm::outs() << "-----------\n";
 

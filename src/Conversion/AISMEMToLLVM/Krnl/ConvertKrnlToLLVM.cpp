@@ -34,6 +34,7 @@
 #include "mlir/Dialect/Func/Transforms/Passes.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
@@ -249,7 +250,9 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   target.addLegalDialect<spade::AISLLVMDialect>();
   target.addLegalOp<ModuleOp>();
   target.addLegalOp<UnrealizedConversionCastOp>();
-
+//only memref::AllocOp, memref::DeallocOp are legal
+  target.addLegalOp<memref::AllocOp>();
+  target.addLegalOp<memref::DeallocOp>();
   // Convert types to legal types for the LLVM dialect.
   LLVMTypeConverter typeConverter(ctx, options);
   onnx_mlir::krnl::customizeTypeConverter(typeConverter);

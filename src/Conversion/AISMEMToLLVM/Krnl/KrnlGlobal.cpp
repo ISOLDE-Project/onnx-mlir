@@ -22,7 +22,7 @@
 #include "src/Dialect/Mlir/DialectBuilder.hpp"
 #include "src/Support/KrnlSupport.hpp"
 
-#define DEBUG_TYPE "AISMEMToAISLLVM_KrnlGlobalOp"
+#define DEBUG_TYPE "AISMEMToLLVM_KrnlGlobalOp"
 
 using namespace mlir;
 using namespace onnx_mlir;

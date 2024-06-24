@@ -4,7 +4,7 @@
 
 //===--------------- GEMM.cpp - Lowering GEMM Op -------------------===//
 //
-// This file lowers the AISMEM GEMM Operator to AISLLVM dialect.
+// This file lowers the AISMEM GEMM Operator to LLVM dialect.
 //
 //===----------------------------------------------------------------------===//
 
