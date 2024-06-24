@@ -68,6 +68,7 @@
 
 using namespace mlir;
 
+
 #define DEBUG_TYPE "spade_krnl_to_llvm"
 
 namespace spade {
@@ -90,7 +91,7 @@ void populateAffineAndKrnlToLLVMConversion(RewritePatternSet &patterns,
   populateAffineToStdConversionPatterns(patterns);
   populateSCFToControlFlowConversionPatterns(patterns);
 
-  populateFuncToLLVMConversionPatterns(typeConverter, patterns);
+  spade::populateFuncToLLVMConversionPatterns(typeConverter, patterns);
 
   arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
   cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include <memory>
 #include <string>
 
@@ -124,11 +125,15 @@ std::unique_ptr<mlir::Pass> createConvertONNXToTOSAPass();
 } // namespace onnx_mlir
 
 namespace spade {
+void populateFuncToLLVMConversionPatterns(mlir::LLVMTypeConverter &converter,
+    mlir::RewritePatternSet &patterns, const mlir::SymbolTable *symbolTable = nullptr);
+
 std::unique_ptr<mlir::Pass> createLowerToAISLEPass();
 
 std::unique_ptr<mlir::Pass> createLowerToAISMEMPass();
 
 std::unique_ptr<mlir::Pass> createLowerToLLVMIRPass();
+
 namespace krnl {
 /// Pass for lowering Krnl dialect to LLVM dialect.
 std::unique_ptr<mlir::Pass> createConvertKrnlToLLVMPass();
