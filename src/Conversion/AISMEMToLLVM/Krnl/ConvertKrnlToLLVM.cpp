@@ -68,7 +68,6 @@
 
 using namespace mlir;
 
-
 #define DEBUG_TYPE "spade_krnl_to_llvm"
 
 namespace spade {
@@ -93,13 +92,14 @@ void populateAffineAndKrnlToLLVMConversion(RewritePatternSet &patterns,
 
   spade::populateFuncToLLVMConversionPatterns(typeConverter, patterns);
 
-  arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
-  cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
+   arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
+   cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
 
   populateReconcileUnrealizedCastsPatterns(patterns);
   krnl::populateKrnlToLLVMConversion(typeConverter, patterns, ctx,
       constantOutputs, singleEntryPoint, entryGlobalOps, inSigGlobalOps,
       outSigGlobalOps, inputMemRefTypes, outputMemRefTypes, verifyInputTensors);
+  populateReconcileUnrealizedCastsPatterns(patterns);
 }
 
 //===----------------------------------------------------------------------===//
@@ -251,13 +251,16 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
   target.addLegalDialect<spade::AISLLVMDialect>();
   target.addLegalOp<ModuleOp>();
   target.addLegalOp<UnrealizedConversionCastOp>();
-//only memref::AllocOp, memref::DeallocOp are legal
+  // only the following from memref dialect are legal
   target.addLegalOp<memref::AllocOp>();
   target.addLegalOp<memref::DeallocOp>();
+  target.addLegalOp<memref::DmaStartOp>();
+  target.addLegalOp<memref::DmaWaitOp>();
+  //target.addLegalOp<memref::Dma>();
   // Convert types to legal types for the LLVM dialect.
-  LLVMTypeConverter typeConverter(ctx, options);
-  onnx_mlir::krnl::customizeTypeConverter(typeConverter);
-  // spade::AISMEMTypeConverter typeConverter(&getContext(), options);
+  // LLVMTypeConverter typeConverter(ctx, options);
+  // onnx_mlir::krnl::customizeTypeConverter(typeConverter);
+  spade::AISMEMTypeConverter typeConverter(&getContext(), options);
 
   // omp::ParallelOp can only be legalized when its region is legal
   target.addDynamicallyLegalOp<omp::ParallelOp, omp::WsLoopOp>(
@@ -278,8 +281,27 @@ void ConvertKrnlToLLVMPass::runOnOperation() {
 
   // We want to completely lower to LLVM, so we use a `FullConversion`. This
   // ensures that only legal operations will remain after the conversion.
-  if (failed(
-          applyFullConversion(getOperation(), target, std::move(patterns)))) {
+  LLVM_DEBUG({
+    llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+    llvm::errs() << "-- spade::krnl::ConvertKrnlToLLVMPass::runOnOperation() "
+                    "---------\n";
+    module->dump();
+    llvm::errs() << "-----------\n";
+  });
+
+  LogicalResult passResult =
+      applyFullConversion(getOperation(), target, std::move(patterns));
+  // LogicalResult passResult =applyPartialConversion(getOperation(), target,
+  // std::move(patterns));
+  LLVM_DEBUG({
+    llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+    llvm::errs() << "++ spade::ConvertKrnlToLLVMPass::runOnOperation(): "
+                 << succeeded(passResult) << "---------\n";
+    module->dump();
+    llvm::outs() << "-----------\n";
+  });
+
+  if (failed(passResult)) {
     signalPassFailure();
   }
 

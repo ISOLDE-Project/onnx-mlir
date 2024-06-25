@@ -45,21 +45,11 @@ public:
     auto qConstant = llvm::dyn_cast<theOperation>(op);
     Location loc = qConstant.getLoc();
 
-    ///
     LLVM_DEBUG({
-      auto pczs_doqa = __PRETTY_FUNCTION__;
-      std::string bkcl_l;
-      if (strlen(pczs_doqa) < 120)
-        bkcl_l = pczs_doqa;
-      else
-        bkcl_l = "unknown";
-      ::llvm::outs() << bkcl_l.c_str() << "\n";
-      qConstant.dump();
-      ::llvm::outs() << "\n";
+      llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+      spade::dumpBlock(op);
+      llvm::outs() << "-----------\n";
     });
-
-    ///
-
     // The element type of the array.
     const Type type = op->getResult(0).getType();
     const MemRefType memRefTy = type.cast<mlir::MemRefType>();
@@ -67,20 +57,11 @@ public:
         typeConverter->convertType(memRefTy.getElementType());
     Type globalType = constantElementType;
 
-    LLVM_DEBUG({
-      ::llvm::outs() << "constantElementType :";
-      constantElementType.dump();
-      ::llvm::outs() << "globalType :";
-      globalType.dump();
-    });
-
     VectorType vectorType = VectorType::get({4}, globalType);
-    LLVM_DEBUG({ vectorType.dump(); });
     Value vector = rewriter.create<LLVM::UndefOp>(loc, vectorType);
     int32_t index = 0;
     Value lastValue = vector;
     auto denseElements = qConstant.getValue().cast<DenseElementsAttr>();
-    LLVM_DEBUG({ denseElements.dump(); });
     auto intOrFpEltAttr = denseElements.dyn_cast<DenseIntOrFPElementsAttr>();
     if (!intOrFpEltAttr)
       return failure();
@@ -96,58 +77,45 @@ public:
       Value pos = rewriter.create<LLVM::ConstantOp>(loc, globalType, index++);
       lastValue = rewriter.create<LLVM::InsertElementOp>(
           loc, vectorType, lastValue, value, pos);
-      LLVM_DEBUG({
-        ::llvm::outs() << index << ": ";
-        lastValue.dump();
-      });
     }
+
+//
+    
+    rewriter.replaceOp(op, {lastValue});
+  
 
     mlir::UnrealizedConversionCastOp castOp;
-    LLVM::ExtractValueOp extractValueOp;
-    LLVM::ReturnOp returnOp;
+    
 
+    LLVM::AllocaOp allocatedPtr;
     for (auto *user : op->getUsers()) {
       castOp = llvm::dyn_cast<mlir::UnrealizedConversionCastOp>(user);
-      if (castOp)
-        break;
-    }
-
-    if (castOp) {
-      for (auto *user : castOp->getUsers()) {
-        extractValueOp = llvm::dyn_cast<LLVM::ExtractValueOp>(user);
-        if (extractValueOp)
-          break;
+      if (castOp) {
+        Type resultType = castOp->getResults()[0].getType();
+        if (resultType.isa<LLVM::LLVMPointerType>()) {
+          if (!allocatedPtr) {
+            auto ptrType = LLVM::LLVMPointerType::get(op->getContext());
+            Value size = rewriter.create<LLVM::ConstantOp>(loc, globalType, 64);
+            allocatedPtr = rewriter.create<LLVM::AllocaOp>(
+                loc, ptrType, vectorType, size, 16);
+            rewriter.create<LLVM::StoreOp>(loc, lastValue, allocatedPtr);
+          }
+          rewriter.replaceAllUsesWith(castOp->getResults()[0], {allocatedPtr});
+          bool deadOp = mlir::isOpTriviallyDead(castOp);
+          bool useEmpty = castOp.use_empty();
+          if (deadOp && useEmpty) {
+            castOp->dropAllUses();
+            rewriter.eraseOp(castOp);
+          }
+        }
       }
     }
 
-    if (extractValueOp) {
-      for (auto *user : extractValueOp->getUsers()) {
-        returnOp = llvm::dyn_cast<LLVM::ReturnOp>(user);
-        if (returnOp)
-          break;
-      }
-    }
-
-    if (!returnOp) {
-      rewriter.replaceOp(op, {lastValue});
-    } else {
-
-      auto ptrType = LLVM::LLVMPointerType::get(op->getContext());
-      Value size = rewriter.create<LLVM::ConstantOp>(loc, globalType, 64);
-      auto allocatedPtr =
-          rewriter.create<LLVM::AllocaOp>(loc, ptrType, vectorType, size, 16);
-      rewriter.create<LLVM::StoreOp>(loc, lastValue, allocatedPtr);
-      rewriter.replaceOp(op, static_cast<Value>(allocatedPtr));
-      SmallVector<Value, 4> newOperands(returnOp->getOperands());
-      newOperands[0] = allocatedPtr;
-      rewriter.replaceOpWithNewOp<LLVM::ReturnOp>(returnOp, newOperands);
-      rewriter.eraseOp(extractValueOp);
-      rewriter.eraseOp(castOp);
-    }
 
     LLVM_DEBUG({
-      ::llvm::outs() << "after\n";
+      llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
       spade::dumpBlock(op);
+      llvm::outs() << "-----------\n";
     });
     return success();
   }

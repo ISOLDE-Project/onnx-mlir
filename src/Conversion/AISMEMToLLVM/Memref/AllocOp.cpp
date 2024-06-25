@@ -104,35 +104,8 @@ public:
     ValueRange args = {arg0};
     auto newCallOp = rewriter.create<LLVM::CallOp>(loc, memFunc, args);
 
-    mlir::UnrealizedConversionCastOp castOp;
-    LLVM::ExtractValueOp extractValueOp;
-    LLVM::ReturnOp returnOp;
-
-    for (auto *user : op->getUsers()) {
-      castOp = llvm::dyn_cast<mlir::UnrealizedConversionCastOp>(user);
-      if (castOp)
-        break;
-    }
-
-    if (castOp) {
-      for (auto *user : castOp->getUsers()) {
-        extractValueOp = llvm::dyn_cast<LLVM::ExtractValueOp>(user);
-        if (extractValueOp)
-          break;
-      }
-    }
-
-    if (extractValueOp) {
-      for (auto *user : extractValueOp->getUsers()) {
-        returnOp = llvm::dyn_cast<LLVM::ReturnOp>(user);
-        if (returnOp)
-          break;
-      }
-    }
-
     LLVM_DEBUG({
-      llvm::errs()
-          << "-- Before update in AllocOpLowering::matchAndRewrite() --\n";
+      llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
       spade::dumpBlock(op);
       llvm::errs() << "---\n";
     });
@@ -141,14 +114,25 @@ public:
 
     // rewriter.replaceOp(op, {newCallOp.getODSResults(0)});
     rewriter.replaceOp(op, newValues);
-    if (returnOp) {
 
-      rewriter.replaceOpWithNewOp<LLVM::ReturnOp>(returnOp, newValues);
+    mlir::UnrealizedConversionCastOp castOp;
 
-      // Erase intermediate operations
-      rewriter.eraseOp(extractValueOp);
-      rewriter.eraseOp(castOp);
+    for (auto *user : op->getUsers()) {
+      castOp = llvm::dyn_cast<mlir::UnrealizedConversionCastOp>(user);
+      if (castOp) {
+        Type resultType = castOp->getResults()[0].getType();
+        if (resultType.isa<LLVM::LLVMPointerType>()) {
+          rewriter.replaceAllUsesWith(castOp->getResults()[0], newValues);
+          bool deadOp = mlir::isOpTriviallyDead(castOp);
+          bool useEmpty = castOp.use_empty();
+          if (deadOp && useEmpty) {
+            castOp->dropAllUses();
+            rewriter.eraseOp(castOp);
+          }
+        }
+      }
     }
+
     {
       std::ostringstream asc;
       const Type type = allocOp->getResult(0).getType();
@@ -180,8 +164,7 @@ public:
       }
     }
     LLVM_DEBUG({
-      llvm::errs()
-          << "-- After update in AllocOpLowering::matchAndRewrite() --\n";
+      llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
       spade::dumpBlock(op);
       llvm::errs() << "---\n";
     });

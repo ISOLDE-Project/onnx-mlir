@@ -45,6 +45,8 @@
 #include "src/Conversion/AISMEMToLLVM/AISMEMToLLVMCommon.hpp"
 #include "llvm/Support/raw_ostream.h"
 
+#define DEBUG_TYPE "aismem_to_llvm"
+
 using namespace mlir;
 using std::nullopt;
 using std::optional;
@@ -58,6 +60,17 @@ void populateAISMEMToLLVMConversionPattern(RewritePatternSet &patterns,
   populateAISMEMQConstantOpPattern(typeConverter, patterns, ctx);
   // memref.alloc
   populateMemrefAllocOpPattern(typeConverter, patterns, ctx);
+  // GEMM
+  populateLoweringAISMEMGEMMOpPattern(typeConverter, patterns, ctx);
+  // DMA Start
+  populateMemrefDmaStartOpPattern(typeConverter, patterns, ctx);
+  // DMA Wait
+  populateMemrefDmaWaitOpPattern(typeConverter, patterns, ctx);
+
+  
+  // insert above this line
+  //
+  populateReconcileUnrealizedCastsPatterns(patterns);
 }
 
 //===----------------------------------------------------------------------===//
@@ -116,16 +129,22 @@ void AISMEMToLLVMLoweringPass::runOnOperation() {
   // With the target and rewrite patterns defined, we can now attempt the
   // conversion. The conversion will signal failure if any of our `illegal`
   // operations were not converted successfully.
-  llvm::errs()
-      << "-- spade::AISMEMToLLVMLoweringPass::runOnOperation() ---------\n";
-  module->dump();
-  llvm::errs() << "-----------\n";
+  LLVM_DEBUG({
+    llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+    llvm::errs()
+        << "-- spade::AISMEMToLLVMLoweringPass::runOnOperation() ---------\n";
+    module->dump();
+    llvm::errs() << "-----------\n";
+  });
   LogicalResult passResult =
       applyPartialConversion(module, target, std::move(patterns));
-  llvm::errs() << "++ spade::AISMEMToLLVMLoweringPass::runOnOperation(): "
-               << succeeded(passResult) << "---------\n";
-  module->dump();
-  llvm::outs() << "-----------\n";
+  LLVM_DEBUG({
+    llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+    llvm::errs() << "++ spade::AISMEMToLLVMLoweringPass::runOnOperation(): "
+                 << succeeded(passResult) << "---------\n";
+    module->dump();
+    llvm::outs() << "-----------\n";
+  });
 
   if (failed(passResult)) {
     signalPassFailure();

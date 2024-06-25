@@ -198,3 +198,7 @@ compile_commands.json
 *.tmp
 .clangd
 graph.*
+*.patched
+log*
+MemManager.yaml
+*.old

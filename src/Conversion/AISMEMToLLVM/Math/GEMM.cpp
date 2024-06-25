@@ -11,10 +11,10 @@
 // #include "src/Compiler/CompilerOptions.hpp"
 #include "helper.hpp"
 
-#define DEBUG_TYPE "MemToLLVM_GEMM"
+#define DEBUG_TYPE "AISMEMToLLVM_GEMM"
 using namespace mlir;
 
-namespace spade {
+namespace  {
 
 struct AISMEMGEMMOpLowering : public ConvertToLLVMPattern {
 
@@ -34,6 +34,7 @@ struct AISMEMGEMMOpLowering : public ConvertToLLVMPattern {
     Location loc = op->getLoc();
     theOperation oldOp = llvm::dyn_cast<theOperation>(op);
     theAdaptor operandAdaptor(operands);
+    oldOp->dump();
     theAdaptor attrAdaptor(oldOp);
 
     ::mlir::Value Y = operandAdaptor.getY();
@@ -51,7 +52,11 @@ struct AISMEMGEMMOpLowering : public ConvertToLLVMPattern {
     Value valueTransB =
         rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), transB);
 
-    LLVM_DEBUG({ spade::dumpBlock(op); });
+    LLVM_DEBUG({
+      llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+      spade::dumpBlock(op);
+      llvm::outs() << "-----------\n";
+    });
     //*
     //* transform parameter
     //*
@@ -75,22 +80,28 @@ struct AISMEMGEMMOpLowering : public ConvertToLLVMPattern {
     tblgen_newOperation_0 =
         rewriter.create<theNewOp>(loc, tblgen_types, tblgen_values);
 
-    ::llvm::SmallVector<::mlir::Value> tblgen_repl_values;
-    for (auto v : ::llvm::SmallVector<::mlir::Value, 4>{
-             tblgen_newOperation_0.getODSResults(0)}) {
-      tblgen_repl_values.push_back(v);
-    }
+    // ::llvm::SmallVector<::mlir::Value> tblgen_repl_values;
+    // for (auto v : ::llvm::SmallVector<::mlir::Value, 4>{
+    //          tblgen_newOperation_0.getODSResults(0)}) {
+    //   tblgen_repl_values.push_back(v);
+    // }
 
-    // lower down operation
-    rewriter.replaceOp(oldOp, tblgen_repl_values);
+    // // lower down operation
+    // rewriter.replaceOp(oldOp, tblgen_repl_values);
+    rewriter.eraseOp(oldOp);
 
-    LLVM_DEBUG({ spade::dumpBlock(tblgen_newOperation_0); });
+    LLVM_DEBUG({
+      llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+      spade::dumpBlock(tblgen_newOperation_0);
+      llvm::outs() << "-----------\n";
+    });
     return ::mlir::success();
   }
 };
-
-void populateLoweringAISMEMGEMMOpPattern(RewritePatternSet &patterns,
-    LLVMTypeConverter &typeConverter, MLIRContext *ctx) {
+}
+namespace spade{
+void populateLoweringAISMEMGEMMOpPattern(LLVMTypeConverter &typeConverter,
+    RewritePatternSet &patterns, MLIRContext *ctx) {
   patterns.insert<AISMEMGEMMOpLowering>(typeConverter, ctx);
 }
 

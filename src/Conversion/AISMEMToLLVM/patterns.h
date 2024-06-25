@@ -15,7 +15,7 @@ namespace krnl {
 void populateLoweringKrnlGlobalOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);
 }
-}
+} // namespace onnx_mlir
 
 namespace spade {
 
@@ -25,8 +25,13 @@ void populateAISMEMQConstantOpPattern(LLVMTypeConverter &typeConverter,
 void populateMemrefAllocOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);
 
-void populateLoweringAISMEMGEMMOpPattern(RewritePatternSet &patterns,
-    LLVMTypeConverter &typeConverter, MLIRContext *ctx);
+void populateLoweringAISMEMGEMMOpPattern(LLVMTypeConverter &typeConverter,
+    RewritePatternSet &patterns, MLIRContext *ctx);
 
+void populateMemrefDmaStartOpPattern(LLVMTypeConverter &typeConverter,
+    RewritePatternSet &patterns, MLIRContext *ctx);
+
+void populateMemrefDmaWaitOpPattern(LLVMTypeConverter &typeConverter,
+    RewritePatternSet &patterns, MLIRContext *ctx);    
 // insert new pattern above this line
 } // namespace spade

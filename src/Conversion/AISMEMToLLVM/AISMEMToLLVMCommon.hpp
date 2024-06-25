@@ -19,14 +19,11 @@ struct AISMEMTypeConverter : public ::mlir::LLVMTypeConverter {
       mlir::MLIRContext *ctx, const mlir::LowerToLLVMOptions &options)
       : ::mlir::LLVMTypeConverter(ctx, options) {
 
-    addConversion([ctx](MemRefType type) -> std::optional<Type> {
-      mlir::Type elemType = type.getElementType();
-      if (!elemType)
-         return std::nullopt;
+    addConversion([ctx](MemRefType type) -> Type {
       return LLVM::LLVMPointerType::get(ctx);
     });
 
-    addSourceMaterialization([&](OpBuilder &builder, Type resultType,
+    addSourceMaterialization([](OpBuilder &builder, Type resultType,
                                  ValueRange inputs,
                                  Location loc) -> optional<Value> {
       if (inputs.size() != 1)
@@ -36,7 +33,7 @@ struct AISMEMTypeConverter : public ::mlir::LLVMTypeConverter {
           .getResult(0);
     });
 
-    addTargetMaterialization([&](OpBuilder &builder, Type resultType,
+    addTargetMaterialization([](OpBuilder &builder, Type resultType,
                                  ValueRange inputs,
                                  Location loc) -> optional<Value> {
       if (inputs.size() != 1)

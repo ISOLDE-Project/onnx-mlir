@@ -26,13 +26,13 @@ using namespace mlir;
 
 namespace spade {
 
-struct AISMEMGEMMOpLowering : public ConversionPattern {
+struct AISLEGEMMOpLowering : public ConversionPattern {
 
   using theOperation = spade::AISLEGEMMOp;
   using theAdaptor = spade::AISLEGEMMOpAdaptor;
   using theNewOp = spade::AISMEMGEMMOp;
 
-  AISMEMGEMMOpLowering(MLIRContext *ctx)
+  AISLEGEMMOpLowering(MLIRContext *ctx)
       : ConversionPattern(theOperation::getOperationName(), 1, ctx) {}
 
   LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
@@ -120,7 +120,7 @@ struct AISMEMGEMMOpLowering : public ConversionPattern {
 
 void populateLoweringAISLEGEMMOpPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx) {
-  patterns.insert<AISMEMGEMMOpLowering>(ctx);
+  patterns.insert<AISLEGEMMOpLowering>(ctx);
 }
 
 } // namespace spade
