@@ -21,6 +21,7 @@
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LogicalResult.h"
 #include "patterns.h"
 
@@ -67,7 +68,6 @@ void populateAISMEMToLLVMConversionPattern(RewritePatternSet &patterns,
   // DMA Wait
   populateMemrefDmaWaitOpPattern(typeConverter, patterns, ctx);
 
-  
   // insert above this line
   //
   populateReconcileUnrealizedCastsPatterns(patterns);
@@ -112,6 +112,7 @@ void AISMEMToLLVMLoweringPass::runOnOperation() {
   // Define the target for this lowering i.e. the LLVM dialect.
   ConversionTarget target(*ctx);
   target.addLegalDialect<LLVM::LLVMDialect>();
+  target.addLegalDialect<spade::AISLLVMDialect>();
   target.addLegalOp<ModuleOp>();
   target.addLegalOp<UnrealizedConversionCastOp>();
 
@@ -149,6 +150,25 @@ void AISMEMToLLVMLoweringPass::runOnOperation() {
   if (failed(passResult)) {
     signalPassFailure();
   }
+#if 0
+  PassManager pm(module.getContext());
+  pm.addPass(spade::createUnrealizedConversionCastPass());
+
+  auto secondPassResult=pm.run(module);
+
+  LLVM_DEBUG({
+    llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+    llvm::errs()
+        << "-- spade::AISMEMToLLVMLoweringPass::runOnOperation() ---------\n";
+    module->dump();
+    llvm::errs() << "-----------\n";
+  });
+
+  if (failed(secondPassResult)) {
+    signalPassFailure();
+  }
+#endif
+
 }
 
 std::unique_ptr<Pass> createLowerToLLVMIRPass() {

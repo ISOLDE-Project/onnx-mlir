@@ -11,6 +11,7 @@ add_onnx_mlir_library(OMAISMEMToLLVM
   Krnl/ConvertKrnlToLLVM.cpp
   Math/GEMM.cpp
   Memref/AllocOp.cpp
+  MLIR/UnrealizedConversionCast.cpp
   ConvertAISMEMToLLVM.cpp
   
   LINK_LIBS PUBLIC

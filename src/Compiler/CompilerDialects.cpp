@@ -6,6 +6,7 @@
 
 #include "CompilerDialects.hpp"
 
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "src/Compiler/CompilerOptions.hpp"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
 #include "src/Dialect/ONNX/ONNXDialect.hpp"

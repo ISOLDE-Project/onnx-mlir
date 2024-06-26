@@ -6,6 +6,7 @@
 
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 using namespace mlir;
@@ -18,6 +19,8 @@ void populateLoweringKrnlGlobalOpPattern(LLVMTypeConverter &typeConverter,
 } // namespace onnx_mlir
 
 namespace spade {
+
+std::unique_ptr<Pass> createUnrealizedConversionCastPass();
 
 void populateAISMEMQConstantOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);
@@ -33,5 +36,9 @@ void populateMemrefDmaStartOpPattern(LLVMTypeConverter &typeConverter,
 
 void populateMemrefDmaWaitOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);    
+
+void populateUnrealizedConversionCastPattern(LLVMTypeConverter &typeConverter,
+    RewritePatternSet &patterns, MLIRContext *ctx);
+     
 // insert new pattern above this line
 } // namespace spade
