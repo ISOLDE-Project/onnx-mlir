@@ -7,7 +7,8 @@
 // This file lowers the AISMEM GEMM Operator to LLVM dialect.
 //
 //===----------------------------------------------------------------------===//
-
+//test cmd:
+//make  ONNX_MODEL=gemm.mlir  ONNX_MLIR_FLAGS=--debug-only=AISMEMToLLVM_GEMM  test
 // #include "src/Compiler/CompilerOptions.hpp"
 #include "helper.hpp"
 #include "mlir/IR/Types.h"
@@ -53,10 +54,9 @@ struct AISMEMGEMMOpLowering : public ConvertToLLVMPattern {
     Location loc = op->getLoc();
     theOperation oldOp = llvm::dyn_cast<theOperation>(op);
     theAdaptor operandAdaptor(operands);
-    auto ctx = oldOp->getContext();
-    const LLVMTypeConverter *typeConverter =
-        static_cast<const LLVMTypeConverter *>(getTypeConverter());
-    oldOp->dump();
+    // auto ctx = oldOp->getContext();
+    // const LLVMTypeConverter *typeConverter =
+    //     static_cast<const LLVMTypeConverter *>(getTypeConverter());
     theAdaptor attrAdaptor(oldOp);
 
     LLVM_DEBUG({
@@ -67,27 +67,27 @@ struct AISMEMGEMMOpLowering : public ConvertToLLVMPattern {
 
     setCastOps obsoleteOps;
     ::mlir::Value Y = operandAdaptor.getY();
-    Y.dump();
+    //Y.dump();
     getConversionCastOperand(Y, obsoleteOps);
 
     ::mlir::Value A = operandAdaptor.getA();
-    A.dump();
+    //A.dump();
     getConversionCastOperand(A, obsoleteOps);
 
     ::mlir::Value A_Shape = operandAdaptor.getAShape();
-    A_Shape.dump();
+    //A_Shape.dump();
     getConversionCastOperand(A_Shape, obsoleteOps);
 
     ::mlir::Value B = operandAdaptor.getB();
-    B.dump();
+    //B.dump();
     getConversionCastOperand(B, obsoleteOps);
 
     ::mlir::Value B_Shape = operandAdaptor.getBShape();
-    B_Shape.dump();
+    //B_Shape.dump();
     getConversionCastOperand(B_Shape, obsoleteOps);
 
     ::mlir::Value C = operandAdaptor.getC();
-    C.dump();
+   // C.dump();
     getConversionCastOperand(C, obsoleteOps);
 
     int32_t transA = attrAdaptor.getTransA();
@@ -142,10 +142,24 @@ struct AISMEMGEMMOpLowering : public ConvertToLLVMPattern {
 
     // lower down operation
     rewriter.replaceOp(oldOp, tblgen_repl_values);
-    //rewriter.eraseOp(oldOp);
-
-    // for(auto castOp: obsoleteOps)
-    //  rewriter.eraseOp(castOp);
+ /*  
+//not a good ideea to erase castOps,
+//runtime error
+//onnx-mlir: /home/uic52463/hdd2/task5.2/toolchain/riscv-llvm/mlir/lib/IR/Operation.cpp:514: 
+void llvm::ilist_traits<mlir::Operation>::removeNodeFromList(llvm::ilist_traits<mlir::Operation>::Operation*): 
+Assertion `op->block && "not already in an operation block!"' failed.
+  */
+    //  for(auto castOp: obsoleteOps){
+    //       bool deadOp = mlir::isOpTriviallyDead(castOp);
+    // bool useEmpty = castOp.use_empty();
+    // if (deadOp && useEmpty) {
+    //   llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";
+    //   LLVM_DEBUG({ llvm::errs() << "erasing: ";castOp.print(llvm::errs()); llvm::errs()<<  "\n";});
+    //   castOp->dropAllUses();
+    //   rewriter.eraseOp(castOp);
+    // }
+    //  }
+    
 
     LLVM_DEBUG({
       llvm::errs() << " ** " << __FILE__ << "(" << __LINE__ << ")\n";

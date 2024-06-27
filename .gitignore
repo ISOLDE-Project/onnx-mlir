@@ -202,3 +202,4 @@ graph.*
 log*
 MemManager.yaml
 *.old
+*copy/
