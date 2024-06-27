@@ -1,10 +1,10 @@
 
-#include "patterns.h"
-#include "mlir/IR/MLIRContext.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "patterns.h"
 #include <optional>
 
 #include "mlir/Pass/Pass.h"
@@ -26,17 +26,19 @@
 #include "src/Dialect/Krnl/KrnlOps.hpp"
 
 using namespace mlir;
-using std::optional;
 using std::nullopt;
+using std::optional;
 
 namespace spade {
 
 void populateAISLEToAISMEMConversionPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx) {
 
-  populateLoweringAISLEQConstantOpPattern(patterns, typeConverter, ctx); 
-  
-  populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx, true);
+  populateLoweringAISLEQConstantOpPattern(patterns, typeConverter, ctx);
+
+  populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx);
+
+  populateLoweringAISLEhstackOpPattern(patterns, typeConverter, ctx);
 }
 
 //===----------------------------------------------------------------------===//
@@ -49,7 +51,7 @@ struct AISLEToAISMEMLoweringPass
 
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AISLEToAISMEMLoweringPass)
 
-  StringRef getArgument() const { return "convert-contirv-to-contimem"; }
+  StringRef getArgument() const { return "convert-aisle-to-aismem"; }
 
   StringRef getDescription() const {
     return "Lower (some)AISLE ops to AISMEM dialect.";
@@ -62,17 +64,6 @@ struct AISLEToAISMEMLoweringPass
   void runOnOperation();
 
 public:
-  // Some ops (RNN ops for example) are lowered to other ONNX ops such as
-  // ONNXMatMulOp, ONNXSplitOp, ONNXTransposeOp, etc. These ONNX ops are then
-  // lowered into krnl ops in this pass.
-  //
-  // To write LIT tests for operations that are lowered to other ONNX
-  // operations, we do not need to check the final generated krnl code (which is
-  // lengthy). It is more convenient to check the intermediate generated code
-  // including ONNX ops. We trust the lowering of the other ONNX ops.
-  //
-  // This flag is used in LIT tests to stop the lowering of the other ONNX ops.
-  // Usage: onnx-mlir-opt --convert-onnx-to-krnl='emit-intermediate-ir'
 };
 
 void AISLEToAISMEMLoweringPass::runOnOperation() {
@@ -88,69 +79,39 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
       arith::ArithDialect, func::FuncDialect, linalg::LinalgDialect,
       math::MathDialect, memref::MemRefDialect, shape::ShapeDialect,
       scf::SCFDialect, spade::AISMEMDialect>();
-  // Needed to support unsigned int computations. To be removed if we use a
-  // scheme that does not rely on the UnrealizedConversionCastOp.
-  // target.addLegalOp<::mlir::UnrealizedConversionCastOp>();
-  // Make ONNXNoneOp legal so that other ONNX ops can use it during the
-  // lowering. ONNXNoneOp will be dangling and removed by calling
-  // canonicalization after the lowering.
-  // target.addLegalOp<::mlir::ONNXNoneOp>();
-//  target.addLegalOp<::spade::AISLEQConstantOp>();
-  // target.addIllegalOp<::conti::AISLEConvOp>();
-  // target.addIllegalOp<::conti::AISLEReluOp>();
-  // target.addIllegalOp<::conti::AISLEMaxPoolOp>();
 
-  /*
-    if (emitIntermediateIR) {
-      // Only used for writing LIT tests for ONNX operations that are lowered to
-      // other ONNX operations. The following operations are prevented from
-    being
-      // lowered further. See the comment in the declaration of
-      // 'emitIntermediateIR' for more details.
-      target.addLegalOp<ONNXMatMulOp>();
-      target.addLegalOp<ONNXReshapeOp>();
-      target.addLegalOp<ONNXSplitV11Op>();
-      target.addLegalOp<ONNXSqueezeV11Op>();
-      target.addLegalOp<ONNXTransposeOp>();
-    }
-  */
-  // Conversion target for accelerators.
-  // for (auto *accel : onnx_mlir::accel::Accelerator::getAccelerators())
-  //  accel->conversionTargetONNXToKrnl(target);
-
-  // Now that the conversion target has been defined, we just need to provide
-  // the set of patterns that will lower the frontend operations.
   RewritePatternSet patterns(&getContext());
 
- // Create a TypeConverter
+  // Create a TypeConverter
   TypeConverter spadeTypeConverter;
 
   // Add source materialization
-  spadeTypeConverter.addSourceMaterialization([&](OpBuilder &builder, Type resultType,
-                                                  ValueRange inputs, Location loc) -> optional<Value> {
-    if (inputs.size() != 1)
-      return nullopt;
+  spadeTypeConverter.addSourceMaterialization(
+      [&](OpBuilder &builder, Type resultType, ValueRange inputs,
+          Location loc) -> optional<Value> {
+        if (inputs.size() != 1)
+          return nullopt;
 
-    return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs).getResult(0);
-  });
+        return builder
+            .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+            .getResult(0);
+      });
 
   // Add target materialization
-  spadeTypeConverter.addTargetMaterialization([&](OpBuilder &builder, Type resultType,
-                                                  ValueRange inputs, Location loc) -> optional<Value> {
-    if (inputs.size() != 1)
-      return nullopt;
+  spadeTypeConverter.addTargetMaterialization(
+      [&](OpBuilder &builder, Type resultType, ValueRange inputs,
+          Location loc) -> optional<Value> {
+        if (inputs.size() != 1)
+          return nullopt;
 
-    return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs).getResult(0);
-  });
+        return builder
+            .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+            .getResult(0);
+      });
 
   // Define patterns.
   populateAISLEToAISMEMConversionPattern(
       patterns, spadeTypeConverter, &getContext());
-
-  // Rewrite patterns for accelerators.
-  // for (auto *accel : onnx_mlir::accel::Accelerator::getAccelerators())
-  //  accel->rewritePatternONNXToKrnl(patterns, krnlTypeConverter,
-  //  &getContext());
 
   // With the target and rewrite patterns defined, we can now attempt the
   // conversion. The conversion will signal failure if any of our `illegal`

@@ -330,6 +330,30 @@ def AISLEReduceMeanOp:AISLE_Op<"ReduceMean",
     }];
 }
 
+//hstack
+def AISLEhstack:AISLE_Op<"hstack",
+  [Pure]> {
+  let summary = "AISLE hstack operation";
+  let description = [{
+  Stack arrays in sequence horizontally (column wise). Functional equivalent to numpy.hstack, see https://numpy.org/doc/stable/reference/generated/numpy.hstack.html
+  }];
+  let arguments = (ins AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, TensorOf<[F64]>]>:$A,
+        AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, TensorOf<[F64]>]>:$B
+    );
+  let results = (outs AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, TensorOf<[F64]>]>:$Y);
+  
+    let extraClassDeclaration = [{
+      static int getNumberOfOperands() {
+        return 2;
+      }
+      static int getNumberOfResults() {
+        return 1;
+      }
+      static std::vector<int> getTypeMap() {
+        return {20};
+      }
+    }];
+}
 
 
 //const

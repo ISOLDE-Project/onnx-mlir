@@ -83,11 +83,15 @@ class AISLLVM_IntrOp<string mnem, list<Trait> traits,
                     traits, numResults>;
 
 
-
+// 26.06.2024 droped in favor of mlir::VectorType
+//def QConstant: LLVMType<"LLVMFixedVector", "vec">{}
 def QConstant: VectorOfRankAndType<[1], [I32]>;
 
  //GEMM
-def AISLLVMGEMMOp: AISLLVM_IntrOp< "spade.gemmf32",[],1>{ 
+// 26.06.2024 it should be an intrinsic, however, the llvm is not updated yet 
+//below a workaround to test the lowering 
+//def AISLLVMGEMMOp: AISLLVM_IntrOp< "spade.gemmf32",[],1>{ 
+def AISLLVMGEMMOp: AISLLVM_Op< "spade.gemm">{ 
   let arguments = (ins
     LLVMPointerType: $Y,
     LLVMPointerType: $A,

@@ -46,9 +46,19 @@ toolchain-onnx-mlir:
 
 .PHONY: test test-clean
 test:
-	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 graph.test.aisle
-	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 graph.test.aismem
-	
+#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.onnx 
+#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisle
+#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aismem
+	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvmir
+#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvm
+
+test-all:
+#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.onnx 
+	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisle
+	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aismem
+	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvmir
+	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvm
+
 test-clean:
-	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/apps/ResNet-18/aida_48_48 clean
+	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm clean
 	

@@ -6,11 +6,13 @@
 
 #include "CompilerDialects.hpp"
 
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "src/Compiler/CompilerOptions.hpp"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
 #include "src/Dialect/ONNX/ONNXDialect.hpp"
 #include "src/Dialect/AISLE/AISLEDialect.hpp"
 #include "src/Dialect/AISMEM/AISMEMDialect.hpp"
+#include "src/Dialect/AISLLVM/AISLLVMDialect.hpp"
 
 #include "mlir/InitAllDialects.h"
 #include "mlir/Target/LLVMIR/Dialect/OpenMP/OpenMPToLLVMIRTranslation.h"
@@ -52,6 +54,7 @@ DialectRegistry registerDialects(ArrayRef<accel::Accelerator::Kind> accels) {
 //
   registry.insert<spade::AISLEDialect>();
   registry.insert<spade::AISMEMDialect>();
+  registry.insert<spade::AISLLVMDialect>();
   return registry;
 }
 
