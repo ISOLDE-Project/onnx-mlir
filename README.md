@@ -23,6 +23,16 @@ Example:
 ```
 make  ONNX_MODEL=constant.mlir  ONNX_MLIR_FLAGS=--debug-only=AISMEMToAISLLVM_QConstant  test-all
 ```
+# Dialects
+|||
+|---|---|
+| ONNX Dialect | [AISLE - **A**utomot**I**ve demon**S**trator m**L**ir dial**E**ct](src/Dialect/AISLE/AISLE.md) |
+|memref Dialect| [AISMEM	**A**utomot**I**ve Demon**S**trator **MEM**ref dialect](src/Dialect/AISMEM/AISMEM.md) |
+| llvm Dialect|[AISLLVM	**A**utomot**I**ve Demon**S**trator **LLVM** dialect](src/Dialect/AISLLVM/AISLLVM.md) |
+| ||
+
+
+
 <p align="center"><img width="50%" src="docs/logo/onnx-mlir-1280x640.png" /></p>
 
 # ONNX-MLIR
