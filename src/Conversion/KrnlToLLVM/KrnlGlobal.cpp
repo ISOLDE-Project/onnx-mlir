@@ -101,12 +101,11 @@ public:
         krnlGlobalOp->getParentOfType<ModuleOp>(), rewriter,
         *getTypeConverter());
 
-    // Prepare data to be inserted into a MemRefDescriptor (a struct).
-   // MemRefDescriptor memRefDescr =
-    //    createMemRefDescriptor(dataPtr, memRefTy, loc, rewriter);
+   // Prepare data to be inserted into a MemRefDescriptor (a struct).
+   MemRefDescriptor memRefDescr =
+       createMemRefDescriptor(dataPtr, memRefTy, loc, rewriter);
 
-    //rewriter.replaceOp(op, {memRefDescr});
-    rewriter.replaceOp(op, {dataPtr});
+    rewriter.replaceOp(op, {memRefDescr});
 
     return success();
   }

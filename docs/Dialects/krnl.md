@@ -175,7 +175,7 @@ The krnl.call op will be lowered to llvm at krnl-to-llvm conversion in which
 OMTensor is used as a container for MemRef arguments. Other representation
 of parameters, such as data pointer only, will be supported in future.
 
-Interfaces: MemoryEffectOpInterface
+Interfaces: `MemoryEffectOpInterface`
 
 #### Attributes:
 
@@ -212,7 +212,7 @@ in the tile, the actual tile size can be given using the tileSize
 optional attribute. This attributes has the same rank as the buffer size,
 and each dimension must be smaller or equal to the actual buffer size.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Attributes:
 
@@ -279,7 +279,7 @@ several actions may happen.
 `padToNext` and `overreadToNex`t are of the same rank as source and memory
 memrefs.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Attributes:
 
@@ -306,6 +306,10 @@ _Define_loops operation_
 The "krnl.define_loops" operation is used to define input loops,
 those are the for loops appearing in the input program that we
 intend to optimize.
+
+Interfaces: `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
 
 #### Results:
 
@@ -346,11 +350,11 @@ given two arrays of int32_t values (G and V), which are used to represent a perf
 hash table for a dictionary, returns the index corresponding to the input value.
 The index returned is valid only if 'input' is in the dictionary described by G and V.
 
-Traits: AlwaysSpeculatableImplTrait, MemRefsNormalizable
+Traits: `AlwaysSpeculatableImplTrait`, `MemRefsNormalizable`
 
-Interfaces: ConditionallySpeculatable, NoMemoryEffect (MemoryEffectOpInterface)
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
-Effects: MemoryEffects::Effect{}
+Effects: `MemoryEffects::Effect{}`
 
 #### Operands:
 
@@ -386,6 +390,10 @@ For example, this operation can be applied to loop references corresponding to
 inter-tile iterations. The return values will be the starting index of the
 current tile being iterated over.
 
+Interfaces: `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
 #### Operands:
 
 | Operand | Description |
@@ -398,6 +406,37 @@ current tile being iterated over.
 | :----: | ----------- |
 | `ind_var_vals` | variadic of any type
 
+### `krnl.get_linear_offset_index` (KrnlGetLinearOffsetIndexOp)
+
+_A Krnl operation to compute a linear offset index from a N-D index._
+
+Given a MemRef and an N-D index (id_1, id_2, ..., id_n), where n is
+the rank of the MemRef, this operation computes a linear offset index.
+
+Traits: `MemRefsNormalizable`
+
+Interfaces: `AffineMapAccessInterface`, `AffineReadOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>map</code></td><td>::mlir::AffineMapAttr</td><td>AffineMap attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `memref` | memref of any type values
+| `indices` | variadic of index
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | index
+
 ### `krnl.global` (KrnlGlobalOp)
 
 _Krnl global operation_
@@ -406,11 +445,11 @@ Operation for holding global data values. A global constant can have a
 meaningful name recorded as its `name` attribute. Its content is stored
 in the `value` dense element attribute.
 
-Traits: AlwaysSpeculatableImplTrait, MemRefsNormalizable
+Traits: `AlwaysSpeculatableImplTrait`, `MemRefsNormalizable`
 
-Interfaces: ConditionallySpeculatable, NoMemoryEffect (MemoryEffectOpInterface)
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
-Effects: MemoryEffects::Effect{}
+Effects: `MemoryEffects::Effect{}`
 
 #### Attributes:
 
@@ -510,9 +549,9 @@ for (i0 = 0; i0 < 10; i0++)
     // Some operations.
 ```
 
-Traits: SingleBlock, SingleBlockImplicitTerminator<KrnlTerminatorOp>
+Traits: `RecursiveMemoryEffects`, `SingleBlockImplicitTerminator<KrnlTerminatorOp>`, `SingleBlock`
 
-Interfaces: LoopLikeOpInterface
+Interfaces: `LoopLikeOpInterface`
 
 #### Operands:
 
@@ -537,7 +576,7 @@ of the memref. The arity of indices is the rank of the memref (i.e., if the
 memref loaded from is of rank 3, then 3 indices are required for the load
 following the memref identifier).
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Operands:
 
@@ -730,9 +769,9 @@ operation ::= `krnl.matmul` $A `[` $aGlobalIndexMemStart `]` `,`
     1) The vector length is the second entry of (i, j, k) compute tile size.
        The vector length must be a compile time constant.
 
-Traits: AttrSizedOperandSegments, MemRefsNormalizable
+Traits: `AttrSizedOperandSegments`, `MemRefsNormalizable`
 
-Interfaces: SpecializedKernelOpInterface
+Interfaces: `SpecializedKernelOpInterface`
 
 #### Attributes:
 
@@ -776,7 +815,7 @@ Starting positions for `src` and `dest` are defined by `src_offset` and
 
 It is the users' responsibility to make sure there is no out-of-bound read/write.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Operands:
 
@@ -820,7 +859,7 @@ If `delayed = true`, the extended iteration space is used to set values.
 In the above example, all 8 elements will be set to the given value.
 
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Attributes:
 
@@ -856,7 +895,7 @@ to assist with maintaining the relative positioning of loop and inner-loop state
 This construct is particularly helpful, for example, for lowering statements that
 are nested imperfectly between an "eager" and a "lazy" loop.
 
-Traits: SingleBlock, SingleBlockImplicitTerminator<KrnlTerminatorOp>
+Traits: `SingleBlockImplicitTerminator<KrnlTerminatorOp>`, `SingleBlock`
 
 ### `krnl.noValue` (KrnlNoneOp)
 
@@ -993,7 +1032,7 @@ This operation can be used to print the input value. The user needs to provide a
 format string (à la printf) to specify how to print the input value.
 If the input value is not specified the operator will print the format string.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Attributes:
 
@@ -1022,7 +1061,7 @@ At the beginning of the msg string, user can add formatting instructions. The fl
 When no formatting is provided, `%s%d` is used (detailed signature and data) by default.
 Print operation ends with a newline, except when only requesting a compact types (`%t`).
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Attributes:
 
@@ -1043,7 +1082,7 @@ _Generate a random normal tensor._
 
 Operation that generates a random normally distributed tensor.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Operands:
 
@@ -1070,7 +1109,7 @@ The `krnl.region` will be removed after affine.for is lowered.
 ToFix: current `krnl.region` does not have input and output. You cannot
 create a new memref inside the region and use it outside of the region.
 
-Traits: AffineScope, NoTerminator, SingleBlock
+Traits: `AffineScope`, `NoTerminator`, `SingleBlock`
 
 ### `krnl.seqalloc` (KrnlSeqAllocOp)
 
@@ -1081,9 +1120,9 @@ The output is tagged with Allocate side effect, and a deallocation is defined fo
 sequence. This deallocation will free all the elements in the sequence as well as
 the sequence itself.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
-Interfaces: AllocationOpInterface, MemoryEffectOpInterface
+Interfaces: `AllocationOpInterface`, `MemoryEffectOpInterface`
 
 #### Operands:
 
@@ -1104,7 +1143,7 @@ _Krnl dealloc a sequence_
 This op deallocate the elements in the sequence and the sequence itself
 with memref::dealloc. This Op is a deep dealloc for sequence type.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Operands:
 
@@ -1130,9 +1169,9 @@ The returned element is marked as allocated by this Op with the bufferation
 interface so that deallocation can be generated correctly through the
 Bufferization::Deallocation pass.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
-Interfaces: AllocationOpInterface, MemoryEffectOpInterface
+Interfaces: `AllocationOpInterface`, `MemoryEffectOpInterface`
 
 #### Attributes:
 
@@ -1165,7 +1204,9 @@ There is no return of a new seq, different from KrnlSeqInsertOp.
 This Op is introduced to accumulate a dynamic tensor in a LoopOp with
 statically known iteration count.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
+
+Interfaces: `MemoryEffectOpInterface`
 
 #### Operands:
 
@@ -1188,7 +1229,7 @@ operation ::= `krnl.specialized_kernel` `(` $loops `)` attr-dict `:` type($loops
 
 Krnl operation to convert.
 
-Interfaces: SpecializedKernelOpInterface
+Interfaces: `SpecializedKernelOpInterface`
 
 #### Operands:
 
@@ -1212,7 +1253,7 @@ value stored should have the same type as the elemental type of the memref.
 The number of arguments provided within brackets need to match the rank of
 the memref.
 
-Traits: MemRefsNormalizable
+Traits: `MemRefsNormalizable`
 
 #### Operands:
 
@@ -1228,11 +1269,11 @@ _Compute the length of a string._
 
 Krnl operation that computes the length of a string.
 
-Traits: AlwaysSpeculatableImplTrait
+Traits: `AlwaysSpeculatableImplTrait`
 
-Interfaces: ConditionallySpeculatable, NoMemoryEffect (MemoryEffectOpInterface)
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
-Effects: MemoryEffects::Effect{}
+Effects: `MemoryEffects::Effect{}`
 
 #### Operands:
 
@@ -1252,11 +1293,11 @@ _Perform string comparison up to N bytes._
 
 Krnl operation that performs a string comparison up to N bytes.
 
-Traits: AlwaysSpeculatableImplTrait
+Traits: `AlwaysSpeculatableImplTrait`
 
-Interfaces: ConditionallySpeculatable, NoMemoryEffect (MemoryEffectOpInterface)
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
-Effects: MemoryEffects::Effect{}
+Effects: `MemoryEffects::Effect{}`
 
 #### Operands:
 
@@ -1301,9 +1342,11 @@ successor of the operation enclosing the region.
 This operation does _not_ have a custom syntax. However, krnl control
 operations omit the terminator in their custom syntax for brevity.
 
-Traits: ReturnLike, Terminator
+Traits: `ReturnLike`, `Terminator`
 
-Interfaces: RegionBranchTerminatorOpInterface
+Interfaces: `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
+
+Effects: `MemoryEffects::Effect{}`
 
 ### `krnl.unroll` (KrnlUnrollOp)
 
@@ -1350,11 +1393,11 @@ corresponding dimension for target memref type.
 %AV = vector_type_cast %A : memref<?x?xf32> to memref<?x?xvector<8xf32>>
 ```
 
-Traits: AlwaysSpeculatableImplTrait, MemRefsNormalizable
+Traits: `AlwaysSpeculatableImplTrait`, `MemRefsNormalizable`
 
-Interfaces: CastOpInterface, ConditionallySpeculatable, NoMemoryEffect (MemoryEffectOpInterface), ViewLikeOpInterface
+Interfaces: `CastOpInterface`, `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `ViewLikeOpInterface`
 
-Effects: MemoryEffects::Effect{}
+Effects: `MemoryEffects::Effect{}`
 
 #### Operands:
 

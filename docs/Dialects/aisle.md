@@ -309,3 +309,28 @@ Effects: `MemoryEffects::Effect{}`
 | :----: | ----------- |
 | `Y` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values
 
+### `aisle.hstack` (spade::AISLEhstack)
+
+_AISLE hstack operation_
+
+Stack arrays in sequence horizontally (column wise). Functional equivalent to numpy.hstack, see https://numpy.org/doc/stable/reference/generated/numpy.hstack.html
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `A` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values
+| `B` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `Y` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values
+

@@ -358,7 +358,7 @@ void populateKrnlToLLVMConversion(LLVMTypeConverter &typeConverter,
     std::map<std::string, SmallVector<MemRefType, 4>> &outputMemRefTypes,
     bool verifyInputTensors) {
   populateLoweringKrnlEntryPointOpPattern(typeConverter, patterns, ctx);
-  onnx_mlir::krnl::populateLoweringKrnlGlobalOpPattern(
+  populateLoweringKrnlGlobalOpPattern(
       typeConverter, patterns, ctx);
 }
 

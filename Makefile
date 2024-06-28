@@ -44,7 +44,7 @@ toolchain-onnx-mlir:
 	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
 
 
-.PHONY: test test-clean
+.PHONY: test test-clean 
 test:
 #	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.onnx 
 #	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisle
@@ -53,12 +53,14 @@ test:
 #	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvm
 
 test-all:
-#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.onnx 
+	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.onnx 
 	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisle
 	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aismem
 	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvmir
-	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvm
+#	make  ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm graph.test.aisllvm
 
 test-clean:
 	make ROOT_DIR=$(ROOT_DIR) -C $(ROOT_DIR)/toolchain/onnx-mlir/test-isolde/gemm clean
-	
+
+onnx-mlir-docs:	
+	make -C $(CURDIR)/build $@
