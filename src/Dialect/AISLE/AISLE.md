@@ -22,7 +22,7 @@ TRy to see if the library gets build:
 ```
 make ONNX_MLIR_CMAKE_TARGET=OMAISLEOps toolchain-onnx-mlir
 ```
-Outpur should be similar to: 
+Output should be similar to: 
 ```
 [ 88%] Building CXX object src/Dialect/AISLE/CMakeFiles/OMAISLEOps.dir/AISLEAttributes.cpp.o
 [100%] Linking CXX static library ../../../Debug/lib/libOMAISLEOps.a

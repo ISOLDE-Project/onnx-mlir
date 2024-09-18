@@ -9,7 +9,6 @@ add_onnx_mlir_library(OMAISMEMToLLVM
   Func/FuncToLLVM.cpp
   Krnl/KrnlEntryPoint.cpp
   Krnl/ConvertKrnlToLLVM.cpp
-  Krnl/KrnlGlobal.cpp
   Math/GEMM.cpp
   Memref/AllocOp.cpp
   MLIR/UnrealizedConversionCast.cpp

@@ -29,5 +29,5 @@ make ONNX_MLIR_CMAKE_TARGET=OMAISLLVMOps compiler
 ```
 Output should be similar to: 
 ```
-
+[100%] Built target OMAISLLVMOps
 ```

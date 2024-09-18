@@ -2,11 +2,19 @@
 
 # SPADE - I**S**olde **P**roject **A**utomotive **DE**monstrator  
 
-
+## Dialects
+|||
+|---|---|
+|  |Depends on|
+| ONNX Dialect | - |
+|  [AISLE - **A**utomot**I**ve demon**S**trator m**L**ir dial**E**ct](src/Dialect/AISLE/AISLE.md) |ONNX Dialect |
+| [AISMEM	**A**utomot**I**ve Demon**S**trator **MEM**ref dialect](src/Dialect/AISMEM/AISMEM.md) |memref Dialect|
+| [AISLLVM	**A**utomot**I**ve Demon**S**trator **LLVM** dialect](src/Dialect/AISLLVM/AISLLVM.md) |llvm Dialect|
+| ||
   
-This repo is intended to be a git submodule of [task5.2](https://github.com/ISOLDE-Project/task5.2), please clone [task5.2.git](https://github.com/ISOLDE-Project/task5.2.git) 
+This repo is intended to be a git submodule of [task5.2](https://github.com/ISOLDE-Project/task5.2), please clone [task5.2.git](https://github.com/ISOLDE-Project/task5.2.git) because some dependencies(llvm,protoc,cmake) are solved in the  [task5.2.git](https://github.com/ISOLDE-Project/task5.2.git)
 
-To build this project, as submodule of the **task5.2** working tree use the folowings, in the project root folder:
+To build this project, as a submodule of the **task5.2** working tree, use the folowings, in **toolchain/onnx-mlir**, further reffered as project root folder:
 ```
 make toolchain-onnx-mlir
 ```
@@ -18,22 +26,13 @@ make compiler
 which call **cmake** to build onnx-mlir using whatever build files are available.  
 
 # Testing 
-## 1. test-isolde/gemm/constant.mlir
-Example:
+## 1. Testcase  split GEMM in two sub-GEMMs
+more details including the split algo here: [test-isolde/gemm/README.md](test-isolde/gemm/README.md)  
+in root folder:   
 ```
-make  ONNX_MODEL=constant.mlir  ONNX_MLIR_FLAGS=--debug-only=AISMEMToAISLLVM_QConstant  test-all
+make  test-all
 ```
-# Dialects
-|||
-|---|---|
-| ONNX Dialect ||
-| ONNX Dialect | [AISLE - **A**utomot**I**ve demon**S**trator m**L**ir dial**E**ct](src/Dialect/AISLE/AISLE.md) |
-|memref Dialect| [AISMEM	**A**utomot**I**ve Demon**S**trator **MEM**ref dialect](src/Dialect/AISMEM/AISMEM.md) |
-| llvm Dialect|[AISLLVM	**A**utomot**I**ve Demon**S**trator **LLVM** dialect](src/Dialect/AISLLVM/AISLLVM.md) |
-| ||
-
-
-
+The outputs(i.e. different intermediate representations), graph.onnx. - onnxir,aisle, are available in folder **test-isolde/gemm**
 <p align="center"><img width="50%" src="docs/logo/onnx-mlir-1280x640.png" /></p>
 
 # ONNX-MLIR
