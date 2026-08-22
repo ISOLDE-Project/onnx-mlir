@@ -12,11 +12,11 @@ PROTOC_INSTALL_DIR      ?= ${INSTALL_DIR}/protoc
 CMAKE_INSTALL_DIR       ?= ${INSTALL_DIR}/cmake
 MLIR_DIR                ?= ${ROOT_DIR}/toolchain/riscv-llvm/build/lib/cmake/mlir
 PROTOC_DIR              ?= ${PROTOC_INSTALL_DIR}/bin
+export PATH             := $(PROTOC_DIR):$(PATH) 
+CC  := clang
+CXX := clang++
 
-CC  := clang-10
-CXX := clang++-10
-
-CMAKE ?=  $(CMAKE_INSTALL_DIR)/bin/cmake
+CMAKE ?=  cmake
 
 ONNX_MLIR_BUILD_TYPE    ?= "Debug"
 ONNX_MLIR_CMAKE_TARGET  ?= onnx-mlir
@@ -27,9 +27,9 @@ compiler:
 
 
 toolchain-onnx-mlir: 
-	export PATH=$(PROTOC_DIR):$(PATH) && \
 	cd $(ROOT_DIR)/toolchain/onnx-mlir && rm -rf build && mkdir -p build && cd build && \
 	$(CMAKE)   \
+	-DCMAKE_CXX_STANDARD=17 \
 	-DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
 	-DONNX_MLIR_BUILD_TESTS=OFF \
 	-DONNX_MLIR_ACCELERATORS=OFF \
