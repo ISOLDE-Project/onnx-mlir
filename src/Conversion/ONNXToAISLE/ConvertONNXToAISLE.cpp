@@ -21,6 +21,10 @@ namespace spade {
 void populateONNXToAISLEConversionPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx, bool enableTiling,
     bool enableParallel) {
+  // ISOLDE split-complex GEMM. Keep it intact in AISLE.
+  populateLoweringONNXToAISLEComplexGEMMOpPattern(
+      patterns, typeConverter, ctx);
+
   // GEMM
   populateLoweringONNXToAISLEGEMMOpPattern(
       patterns, typeConverter, ctx, enableParallel);

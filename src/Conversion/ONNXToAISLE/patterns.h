@@ -9,6 +9,10 @@
 using namespace mlir;
 
 namespace spade {
+
+void populateLoweringONNXToAISLEComplexGEMMOpPattern(
+    RewritePatternSet &patterns, TypeConverter &typeConverter,
+    MLIRContext *ctx);
   
 void populateLoweringONNXToAISLEGEMMOpPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx, bool enableParallel);

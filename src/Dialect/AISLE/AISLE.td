@@ -409,4 +409,56 @@ def AISLEQConstantOp : AISLE_Op< "qconstant",  [Pure, OpInterface<"mlir::ResultT
   ];
 }
 
+//===----------------------------------------------------------------------===//
+// ISOLDE RedMulE extensions
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+//ComplexGEMM
+// ISOLDE split-complex matrix multiplication. Keep this operation at the
+// mathematical/AISLE level; mapping to individual RedMulE instances happens
+// later in the AISLE -> AISMEM lowering.
+//===----------------------------------------------------------------------===//
+
+def AISLEComplexGEMMOp: AISLE_Op<"ComplexGEMM", [Pure]> {
+  let summary = "AISLE split-complex GEMM operator";
+  let description = [{
+    Computes a split-complex matrix multiplication:
+
+      Cr = Ar * Br - Ai * Bi
+      Ci = Ar * Bi + Ai * Br
+
+    Ar/Ai are the real/imaginary components of A and Br/Bi are the
+    real/imaginary components of B. The operation deliberately preserves
+    complex-GEMM semantics in AISLE; tiling, RedMulE assignment, SPM
+    residency, and FP16 data movement are lower-level decisions.
+  }];
+  let arguments = (ins
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Ar,
+    TensorOf<[I32]>:$Ar_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Ai,
+    TensorOf<[I32]>:$Ai_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Br,
+    TensorOf<[I32]>:$Br_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Bi,
+    TensorOf<[I32]>:$Bi_shape
+  );
+  let results = (outs
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Cr,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Ci
+  );
+  let extraClassDeclaration = [{
+    static int getNumberOfOperands() {
+      return 8;
+    }
+    static int getNumberOfResults() {
+      return 2;
+    }
+    static std::vector<int> getTypeMap() {
+      return {20, 20};
+    }
+  }];
+}
+
+
 #endif // AISLE_OPS
