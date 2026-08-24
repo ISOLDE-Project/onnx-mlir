@@ -8,6 +8,7 @@ add_onnx_mlir_library(OMAISLEToAISMEM
   ConvertAISLEToAISMEM.cpp
   Constant/QConstant.cpp
   DMA/hstack.cpp
+  Math/ComplexGEMM.cpp
   Math/GEMM.cpp
   
   LINK_LIBS PUBLIC

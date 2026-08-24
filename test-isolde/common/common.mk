@@ -49,6 +49,16 @@ endif
 # Common flags
 RISCV_WARNINGS += -Wunused-variable -Wall -Wextra -Wno-unused-command-line-argument # -Werror
  
+
+DEBUG_DIALECT_CONVERSION ?= no
+
+ifeq ($(DEBUG_DIALECT_CONVERSION),yes)
+DIALECT_DEBUG := -debug-only=dialect-conversion
+else
+DIALECT_DEBUG :=
+endif
+
+
 # LLVM Flags
 LLVM_INCLUDES  ?= $(LLVM_INCLUDE_DIR)/riscv$(RISCV_XLEN)-unknown-elf/include
 LLVM_LIBS      ?= $(LLVM_INSTALL_DIR)/riscv$(RISCV_XLEN)-unknown-elf/lib
@@ -134,7 +144,7 @@ graph.test.aisle :  $(ONNX_MODEL)
 ## Emit AISMEM / SPADE MLIR
 graph.test.aismem :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph $(DIALECT_DEBUG)   $<
 
 ## Emit AISLLVM IR
 graph.test.aisllvmir :  $(ONNX_MODEL) 	

@@ -14,6 +14,9 @@ namespace spade {
  void populateLoweringAISLEQConstantOpPattern(RewritePatternSet &patterns,
       TypeConverter &typeConverter, MLIRContext *ctx);
 
+void populateLoweringAISLEComplexGEMMOpPattern(RewritePatternSet &patterns,
+        TypeConverter &typeConverter, MLIRContext *ctx);
+
 void populateLoweringAISLEGEMMOpPattern(RewritePatternSet &patterns,
         TypeConverter &typeConverter, MLIRContext *ctx); 
 

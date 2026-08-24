@@ -36,6 +36,8 @@ void populateAISLEToAISMEMConversionPattern(RewritePatternSet &patterns,
 
   populateLoweringAISLEQConstantOpPattern(patterns, typeConverter, ctx);
 
+  populateLoweringAISLEComplexGEMMOpPattern(patterns, typeConverter, ctx);
+
   populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx);
 
   populateLoweringAISLEhstackOpPattern(patterns, typeConverter, ctx);
@@ -79,6 +81,16 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
       arith::ArithDialect, func::FuncDialect, linalg::LinalgDialect,
       math::MathDialect, memref::MemRefDialect, shape::ShapeDialect,
       scf::SCFDialect, spade::AISMEMDialect>();
+
+  // ComplexGEMM Milestone A explicitly bridges its newly allocated AISMEM
+  // result memrefs back to the tensor result types of the AISLE operation.
+  // These temporary bridge casts are reconciled later in the pipeline.
+  target.addLegalOp<UnrealizedConversionCastOp>();
+
+  // Milestone A requires the complex GEMM to cross the AISLE/AISMEM
+  // boundary. applyPartialConversion is otherwise allowed to leave
+  // unclassified AISLE operations in the IR.
+  target.addIllegalOp<spade::AISLEComplexGEMMOp>();
 
   RewritePatternSet patterns(&getContext());
 

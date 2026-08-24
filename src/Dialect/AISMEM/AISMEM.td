@@ -209,6 +209,38 @@ def AISMEMGEMMOp: AISMEM_Op<"GEMM", [Pure]> {
   let results = (outs NoneType:$none_val);
 }
 
+//ComplexGEMM
+// Split-complex matrix multiplication with explicit output buffers.
+// Hardware scheduling and decomposition into individual RedMulE launches are
+// intentionally deferred to a later AISMEM lowering milestone.
+def AISMEMComplexGEMMOp: AISMEM_Op<"ComplexGEMM", [Pure]> {
+  let summary = "AISMEM split-complex GEMM operator";
+  let description = [{
+    Computes a split-complex matrix multiplication:
+
+      Cr = Ar * Br - Ai * Bi
+      Ci = Ar * Bi + Ai * Br
+
+    Ar/Ai and Br/Bi are split real/imaginary input buffers. Cr and Ci are
+    explicit output buffers. This operation preserves complex-GEMM semantics
+    at the AISMEM level; RedMulE tile assignment, SPM residency, phase
+    scheduling, and sign-bit negation are lower-level decisions.
+  }];
+  let arguments = (ins
+    Arg<AnyMemRef, "Ar", [MemRead]>:$Ar,
+    Arg<AnyMemRef, "Ar_Shape", [MemRead]>:$Ar_shape,
+    Arg<AnyMemRef, "Ai", [MemRead]>:$Ai,
+    Arg<AnyMemRef, "Ai_Shape", [MemRead]>:$Ai_shape,
+    Arg<AnyMemRef, "Br", [MemRead]>:$Br,
+    Arg<AnyMemRef, "Br_Shape", [MemRead]>:$Br_shape,
+    Arg<AnyMemRef, "Bi", [MemRead]>:$Bi,
+    Arg<AnyMemRef, "Bi_Shape", [MemRead]>:$Bi_shape,
+    Arg<AnyMemRef, "Cr", [MemWrite]>:$Cr,
+    Arg<AnyMemRef, "Ci", [MemWrite]>:$Ci
+  );
+  let results = (outs NoneType:$none_val);
+}
+
 //Softmax
 def AISMEMSoftmaxOp: AISMEM_Op<"Softmax", [Pure]> {
   let summary = "AISMEM Softmax Operator";
