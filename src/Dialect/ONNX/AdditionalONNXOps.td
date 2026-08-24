@@ -29,9 +29,60 @@ include "mlir/IR/SymbolInterfaces.td"
 include "src/IR/AttrBase.td"
 
 //===----------------------------------------------------------------------===//
-// ONNX Ops to assist lowering of ONNX.
+// ISOLDE extension
 //===----------------------------------------------------------------------===//
 
+
+//===----------------------------------------------------------------------===//
+// ONNX Ops to assist lowering of ONNX.
+//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
+// ISOLDE RedMulE split-complex GEMM.
+//===----------------------------------------------------------------------===//
+
+def ONNXRedMulEComplexGemmOp :
+    ONNX_Op<"RedMulEComplexGemm", [Pure]> {
+
+  let summary = "ISOLDE RedMulE split-complex GEMM";
+
+  let description = [{
+    Computes a matrix multiplication on split-complex tensors:
+
+      Cr = Ar * Br - Ai * Bi
+      Ci = Ar * Bi + Ai * Br
+
+    Ar/Ai are the real/imaginary components of A.
+    Br/Bi are the real/imaginary components of B.
+
+    This operation is an ISOLDE extension and is not part of standard ONNX.
+  }];
+
+  let arguments = (ins
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Ar,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Ai,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Br,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Bi
+  );
+
+  let results = (outs
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Cr,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Ci
+  );
+
+  let extraClassDeclaration = [{
+    static int getNumberOfOperands() {
+      return 4;
+    }
+
+    static int getNumberOfResults() {
+      return 2;
+    }
+
+    static std::vector<int> getTypeMap() {
+      return {30, 30};
+    }
+  }];
+}
 /*
   Note: each operation ONNXxxxOp that interact with shape helper should have
   the following def.

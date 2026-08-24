@@ -110,28 +110,33 @@ libsim.a : startup.c.o
 	$(AR) rcs $@ $^
 
 
-
-graph :  $(ONNX_MODEL) 
+## Generate object, LLVM IR, and ONNX IR
+graph:  $(ONNX_MODEL) 
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitObj -o $@  $<
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitObj -o $@  $<
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitLLVMIR -o $@  $<
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitLLVMIR -o $@  $<
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitONNXIR -o $@  $<
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitONNXIR -o $@  $<
+
+## Test normal ONNX lowering	
 graph.test :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitMLIR   -o graph  $<
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitLLVM   -o graph  $<
 
+## Emit AISLE / SPADE IR
 graph.test.aisle :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEIR -o graph  $<
 
+## Emit AISMEM / SPADE MLIR
 graph.test.aismem :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph  $<
 
+## Emit AISLLVM IR
 graph.test.aisllvmir :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVMIR -o graph  $<
@@ -141,6 +146,7 @@ graph.test.aisllvm :  $(ONNX_MODEL)
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVM -o graph  $<
 
+## Emit ONNX IR
 graph.test.onnx :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
@@ -170,9 +176,26 @@ print_shared_library_deps:
 	@echo ldd - print shared library dependencies
 	ldd $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 
-
+## print configuration
 print_config:
 	@echo ROOT_DIR=$(ROOT_DIR)
 	@echo CC=$(CC)
 	@echo CXX=$(CXX)
 	@echo OBJDUMP=$(OBJDUMP)
+
+help: Makefile
+	@printf "Available targets:\n------------------\n"
+	@for mkfile in $(MAKEFILE_LIST); do \
+		awk '\
+		/^[a-zA-Z0-9_.-]+[[:space:]]*:/ { \
+			if (match(lastLine, /^##[[:space:]]+(.*)/)) { \
+				target = $$0; \
+				sub(/[[:space:]]*:.*$$/, "", target); \
+				helpMessage = substr(lastLine, RSTART + 3, RLENGTH - 3); \
+				printf "%-24s %s\n", target, helpMessage; \
+			} \
+		} \
+		{ lastLine = $$0 }' $$mkfile; \
+	done
+
+.PHONY: help

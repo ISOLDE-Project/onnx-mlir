@@ -1301,6 +1301,22 @@ private:
     }
   }
 
+  void ImportRedMulEComplexGemmNode(const onnx::NodeProto &node) {
+    // Keep the custom domain explicit so a coincidentally named operator from
+    // another vendor still falls back to the generic ONNXCustomOp path.
+    if (node.domain() != "com.isolde") {
+      ImportCustomNode(node);
+      return;
+    }
+
+    std::vector<Value> inputs;
+    getNodeInputs(node, inputs);
+    auto attributes = ImportNodeAttributes(node);
+    buildOutputAndOperation<ONNXRedMulEComplexGemmOp>(node, inputs,
+        ONNXRedMulEComplexGemmOp::getNumberOfOperands(),
+        ONNXRedMulEComplexGemmOp::getNumberOfResults(), attributes);
+  }
+
   void ImportCustomNode(const onnx::NodeProto &node) {
     llvm::StringRef opName = node.op_type();
     auto funcName = opName.str();
@@ -1356,6 +1372,10 @@ private:
 
   void InitHandlerMap() {
 #include "src/Builder/OpBuildTable.inc"
+    // ISOLDE custom-domain op. Custom operators are intentionally absent from
+    // the generated upstream ONNX op build table.
+    import_handler_map_["RedMulEComplexGemm"] =
+        &onnx_mlir::detail::FrontendGenImpl::ImportRedMulEComplexGemmNode;
   }
 
   /*!
