@@ -1,3 +1,4 @@
+
 // SPDX-License-Identifier: Apache-2.0
 
 //===--- AISMEM.td -- AISMEM Dialect Operation Definitions ----*- tablegen -===//
@@ -211,8 +212,10 @@ def AISMEMGEMMOp: AISMEM_Op<"GEMM", [Pure]> {
 
 //ComplexGEMM
 // Split-complex matrix multiplication with explicit output buffers.
-// Hardware scheduling and decomposition into individual RedMulE launches are
-// intentionally deferred to a later AISMEM lowering milestone.
+// Kept as a semantic AISMEM operation for compatibility.  The current
+// AISLE->AISMEM lowering expands aisle.ComplexGEMM directly into the scheduled
+// RedMulE operations below, so new complex GEMMs do not need to materialize
+// this operation.
 def AISMEMComplexGEMMOp: AISMEM_Op<"ComplexGEMM", [Pure]> {
   let summary = "AISMEM split-complex GEMM operator";
   let description = [{
@@ -237,6 +240,74 @@ def AISMEMComplexGEMMOp: AISMEM_Op<"ComplexGEMM", [Pure]> {
     Arg<AnyMemRef, "Bi_Shape", [MemRead]>:$Bi_shape,
     Arg<AnyMemRef, "Cr", [MemWrite]>:$Cr,
     Arg<AnyMemRef, "Ci", [MemWrite]>:$Ci
+  );
+  let results = (outs NoneType:$none_val);
+}
+
+//===----------------------------------------------------------------------===//
+// RedMulE scheduled operations
+//===----------------------------------------------------------------------===//
+
+// One asynchronous GEMM launch on a selected RedMulE tile.
+//
+// accumulate = false:
+//   initialize tile-local X/W/Y SPM storage, zero Y, then launch GEMM.
+// accumulate = true:
+//   update tile-local X/W only, preserve Y, then launch GEMM so the hardware
+//   accumulates into the existing Y value.
+// negateB = true requests raw FP16 sign-bit negation while B is uploaded.
+def AISMEMRedMulEGEMMOp: AISMEM_Op<"RedMulEGEMM"> {
+  let summary = "Asynchronous GEMM launch on a selected RedMulE tile";
+  let description = [{
+    Launches one GEMM on a selected RedMulE tile while keeping tile-local SPM
+    state explicit in the operation semantics.
+
+    With accumulate=false, lowering initializes the tile SPM layout and zeroes
+    Y before launch. With accumulate=true, lowering rewrites only X and W and
+    preserves the previous Y so the next GEMM accumulates into it.
+
+    negateB is intended for split-complex GEMM phase 2, where RM0 computes
+    Ai * (-Bi). For FP16 this is implemented as raw sign-bit negation during
+    upload, not scalar floating-point arithmetic.
+
+    Y is the persistent tile-local accumulator, carried as an explicit memref
+    operand with a read+write effect. The write effect keeps the launch out of
+    dead-code elimination, and the read+write makes phase1 -> phase2 -> download
+    a real memory dependency instead of relying on textual order. tile is an i32
+    index to match the rv32im core.
+  }];
+  let arguments = (ins
+    Arg<AnyMemRef, "A", [MemRead]>:$A,
+    Arg<AnyMemRef, "A_Shape", [MemRead]>:$A_shape,
+    Arg<AnyMemRef, "B", [MemRead]>:$B,
+    Arg<AnyMemRef, "B_Shape", [MemRead]>:$B_shape,
+    Arg<AnyMemRef, "Y", [MemRead, MemWrite]>:$Y,
+    I32Attr:$tile,
+    DefaultValuedAttr<BoolAttr, "false">:$accumulate,
+    DefaultValuedAttr<BoolAttr, "false">:$negateB
+  );
+  let results = (outs NoneType:$none_val);
+}
+
+// Barrier for one or more asynchronous RedMulE launches.  mask uses the same
+// bit convention as REDMULE_BIT(tile) in the C programming model.
+def AISMEMRedMulEWaitOp: AISMEM_Op<"RedMulEWait"> {
+  let summary = "Wait for a mask of RedMulE tiles";
+  let arguments = (ins
+    I32Attr:$mask
+  );
+  let results = (outs NoneType:$none_val);
+}
+
+// Copy the persistent tile-local Y SPM buffer (source operand $Y, read) into a
+// host-visible output memref ($destination, written) after the final phase has
+// completed. Reading $Y ties the download to the GEMMs that produced it.
+def AISMEMRedMulEDownloadOp: AISMEM_Op<"RedMulEDownload"> {
+  let summary = "Download the persistent Y result from a RedMulE tile";
+  let arguments = (ins
+    Arg<AnyMemRef, "Y", [MemRead]>:$Y,
+    Arg<AnyMemRef, "destination", [MemWrite]>:$destination,
+    I32Attr:$tile
   );
   let results = (outs NoneType:$none_val);
 }

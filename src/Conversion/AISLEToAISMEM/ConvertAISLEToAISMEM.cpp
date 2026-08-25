@@ -82,14 +82,15 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
       math::MathDialect, memref::MemRefDialect, shape::ShapeDialect,
       scf::SCFDialect, spade::AISMEMDialect>();
 
-  // ComplexGEMM Milestone A explicitly bridges its newly allocated AISMEM
-  // result memrefs back to the tensor result types of the AISLE operation.
-  // These temporary bridge casts are reconciled later in the pipeline.
+  // ComplexGEMM expands to an explicit scheduled RedMulE sequence in AISMEM,
+  // while its newly allocated result memrefs are bridged back to the tensor
+  // result types expected at the AISLE boundary. These temporary bridge casts
+  // are reconciled later in the pipeline.
   target.addLegalOp<UnrealizedConversionCastOp>();
 
-  // Milestone A requires the complex GEMM to cross the AISLE/AISMEM
-  // boundary. applyPartialConversion is otherwise allowed to leave
-  // unclassified AISLE operations in the IR.
+  // Require complex GEMM to cross the AISLE/AISMEM boundary and materialize
+  // the explicit four-launch schedule. applyPartialConversion is otherwise
+  // allowed to leave unclassified AISLE operations in the IR.
   target.addIllegalOp<spade::AISLEComplexGEMMOp>();
 
   RewritePatternSet patterns(&getContext());

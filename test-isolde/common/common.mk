@@ -196,9 +196,12 @@ print_shared_library_deps:
 ## print configuration
 print_config:
 	@echo ROOT_DIR=$(ROOT_DIR)
+	@echo ***
+	@echo onnx-mlir=$(ONNX_INSTALL_DIR)/bin/onnx-mlir
+	@echo ***
 	@echo CC=$(CC)
 	@echo CXX=$(CXX)
-	@echo OBJDUMP=$(OBJDUMP)
+# 	@echo OBJDUMP=$(OBJDUMP)
 
 help: Makefile
 	@printf "Available targets:\n------------------\n"
