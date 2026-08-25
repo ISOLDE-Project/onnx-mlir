@@ -83,7 +83,8 @@ RUNTIME_LLVM  ?= crt0-llvm.S.o
 
 
 #ONNX_INSTALL_DIR        ?= ${ROOT_DIR}/${INSTALL_PREFIX}/onnx-mlir
-ONNX_INSTALL_DIR        ?= ${ROOT_DIR}/toolchain/onnx-mlir/build/Debug
+#ONNX_INSTALL_DIR        ?= ${ROOT_DIR}/toolchain/onnx-mlir/build/Debug
+ONNX_INSTALL_DIR        ?= ${ROOT_DIR}/build/Debug
 ONNX_MLIR_FLAGS			?=	
 TOOLS_INSTALL_DIR       ?= ${ROOT_DIR}/install/onnx-mlir/py-codegen
 EXPORT_ELF              ?= ${ROOT_DIR}/HLS/aida/build/bin/export_elf

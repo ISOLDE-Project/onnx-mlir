@@ -15,7 +15,7 @@ MINICONDA_ENV=ibex
 #     $ conda deactivate
 
 # Get the root directory of the Git repository
-# export ROOT_DIR=$(git rev-parse --show-toplevel)
+export ROOT_DIR=$(git rev-parse --show-toplevel)
 source $MINICONDA
 conda activate $MINICONDA_ENV
 
