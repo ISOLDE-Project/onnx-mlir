@@ -11,7 +11,8 @@ include ${TOP_LEVEL_DIR}/test-isolde/common/common.mk
 
 all: graph.test.aismem
 
-golden: $(DST_DIR)
+## generate ONNX model
+golden:  check-conda-ibex  $(DST_DIR)
 	python3 $(mkfile_path)/models/generate_redmule_complex_gemm.py \
     --m 12 \
     --n 16 \

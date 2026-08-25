@@ -88,7 +88,13 @@ ONNX_MLIR_FLAGS			?=
 TOOLS_INSTALL_DIR       ?= ${ROOT_DIR}/install/onnx-mlir/py-codegen
 EXPORT_ELF              ?= ${ROOT_DIR}/HLS/aida/build/bin/export_elf
 
-
+## check for Python environment
+check-conda-ibex:
+	@if [ "$$CONDA_DEFAULT_ENV" != "ibex" ]; then \
+		echo "Error: Conda environment 'ibex' must be active."; \
+		echo "Run: source ./eth.sh"; \
+		exit 1; \
+	fi
 
 %.cpp.o : ../models/%.cpp
 	$(CXX) -c    -march=rv32gv -Iinclude -I. -I$(LLVM_INCLUDES) $(RISCV_CXXFLAGS) -o  $(^F).o   $<

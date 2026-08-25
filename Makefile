@@ -36,11 +36,16 @@ config:
 	-DONNX_MLIR_ENABLE_STABLEHLO=OFF \
 	-DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_CXX_COMPILER=$(CXX) \
+	-DCMAKE_CXX_FLAGS="-include cstdint" \
 	-DCMAKE_INSTALL_PREFIX=$(ONNX_INSTALL_DIR) \
 	-DMLIR_DIR=${MLIR_DIR} \
 	-DCMAKE_BUILD_TYPE=$(ONNX_MLIR_BUILD_TYPE) \
 	..
 
+
+toolchain-onnx-mlir: config
+	cd $(ROOT_DIR)/toolchain/onnx-mlir && \
+	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
 
 .PHONY: test test-clean
 test:
