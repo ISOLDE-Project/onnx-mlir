@@ -4,6 +4,10 @@
 ifndef ROOT_DIR
 $(error ROOT_DIR is not defined. Please execute'source eth.sh' from top folder.)
 endif
+TEST_CASE           :=  complex_gemm
+TEST_CASE_DIR       :=  $(ROOT_DIR)/test-isolde/$(TEST_CASE)
+BANNER              :=  "💡 🏲  $(TEST_CASE) 🏲"
+
 INSTALL_PREFIX          ?= install
 LLVM_INSTALL_DIR ?=$(ROOT_DIR)/$(INSTALL_PREFIX)/riscv-llvm
 LLVM_INCLUDE_DIR ?=$(ROOT_DIR)/$(INSTALL_PREFIX)/riscv-llvm
@@ -152,6 +156,7 @@ graph.test.aisle :  $(ONNX_MODEL)
 graph.test.aismem :  $(ONNX_MODEL) 	
 	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph $(DIALECT_DEBUG)   $<
+	@echo "🔔 $(TEST_CASE_DIR)/graph.spade.mlir"
 
 ## Emit AISLLVM IR
 graph.test.aisllvmir :  $(ONNX_MODEL) 	
@@ -196,9 +201,10 @@ print_shared_library_deps:
 ## print configuration
 print_config:
 	@echo ROOT_DIR=$(ROOT_DIR)
-	@echo ***
+	@echo $(BANNER)
 	@echo onnx-mlir=$(ONNX_INSTALL_DIR)/bin/onnx-mlir
-	@echo ***
+	@echo TEST_CASE_DIR=$(TEST_CASE_DIR)
+	@echo $(BANNER)
 	@echo CC=$(CC)
 	@echo CXX=$(CXX)
 # 	@echo OBJDUMP=$(OBJDUMP)

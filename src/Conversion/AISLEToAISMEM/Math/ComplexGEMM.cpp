@@ -4,39 +4,32 @@
 
 //===-------- ComplexGEMM.cpp - Lowering ComplexGEMM Op --------===//
 //
-// This file lowers the AISLE split-complex GEMM operator to an explicit
-// RedMulE schedule in AISMEM.
+// Lower split-complex GEMM to an explicit RedMulE/SPM schedule in AISMEM.
 //
-// The generated schedule mirrors the C programming model in
-// isolde/sw/complex_gemm/complex_gemm.c:
+// The lowering mirrors the C programming model:
 //
-//   Phase 1  (accumulate = false: establish SPM layout, zero Y)
-//     RM0: Yr  = Ar * Br
-//     RM1: Yi  = Ar * Bi
+//   Phase 1
+//     RM0: upload Ar -> X, Br -> W, zero Y, GEMM
+//     RM1: upload Ar -> X, Bi -> W, zero Y, GEMM
 //     wait RM0 + RM1
 //
-//   Phase 2  (accumulate = true: rewrite X/W only, keep Y)
-//     RM0: Yr += Ai * (-Bi)   (negateB negates Bi during upload)
-//     RM1: Yi += Ai * Br
+//   Phase 2
+//     RM0: overwrite X with Ai, overwrite W with -Bi, GEMM (Y preserved)
+//     RM1: overwrite X with Ai, overwrite W with  Br, GEMM (Y preserved)
 //     wait RM0 + RM1
 //
 //   Download
-//     RM0.Yr -> Cr
-//     RM1.Yi -> Ci
+//     RM0.Y -> Cr
+//     RM1.Y -> Ci
 //
-// Each tile owns a persistent Y accumulator that lives in tile-local SPM
-// between the two phases. It is modelled here as an explicit memref operand
-// (yReal / yImag) so that:
-//   * every RedMulEGEMM carries a memory write effect and is therefore not
-//     eliminated by canonicalization DCE, and
-//   * the phase1 -> phase2 -> download ordering is a real memory dependency
-//     rather than relying on textual position alone.
+// SPM addresses are explicit SSA values.  spm_write returns the next SPM
+// address, so the phase-1 address chain naturally establishes:
 //
-// The yReal/yImag buffers are provisional at this level: the later
-// AISMEM->LLVM lowering realizes them as tile-local SPM (spm_write / spm_read),
-// not as host allocations -- exactly like Cr/Ci are produced by a download.
+//   x_addr = get_addr_start(0)
+//   w_addr = upload(X, x_addr).next
+//   y_addr = upload(W, w_addr).next
 //
-// tile and mask are i32 to match the rv32im RISC-V core the RTL instantiates.
+// Phase 2 reuses x_addr and w_addr, while y_addr is left untouched.
 //
 //===----------------------------------------------------------------------===//
 
@@ -56,6 +49,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include <cstdint>
+#include <limits>
 
 #define DEBUG_TYPE "AISLEToAISMEM_ComplexGEMM"
 
@@ -68,47 +62,140 @@ namespace {
 constexpr int32_t RMReal = 0;
 constexpr int32_t RMImag = 1;
 constexpr int32_t RMMask = (1 << RMReal) | (1 << RMImag);
+constexpr int32_t SPMBank = 0;
 
-// One asynchronous GEMM launch on `tile`, accumulating into the persistent
-// tile-local accumulator `y`.
-static spade::AISMEMRedMulEGEMMOp createRedMulEGEMM(
-    ConversionPatternRewriter &rewriter, Location loc, Value a, Value aShape,
-    Value b, Value bShape, Value y, int32_t tile, bool accumulate,
-    bool negateB) {
-  SmallVector<Value> operands{a, aShape, b, bShape, y};
+static spade::AISMEMRedMulEAddrStartOp createRedMulEAddrStart(
+    ConversionPatternRewriter &rewriter, Location loc, int32_t tile) {
+  SmallVector<Type> resultTypes{rewriter.getI32Type()};
+  SmallVector<NamedAttribute> attributes{
+      rewriter.getNamedAttr("tile", rewriter.getI32IntegerAttr(tile)),
+      rewriter.getNamedAttr("bank", rewriter.getI32IntegerAttr(SPMBank))};
+
+  return rewriter.create<spade::AISMEMRedMulEAddrStartOp>(
+      loc, resultTypes, ValueRange{}, attributes);
+}
+
+// Copy one host memref into a selected RedMulE private SPM address.
+//
+// The returned i32 is the next address returned by spm_write.  negate=true
+// means that FP16 sign bits are flipped while copying (used only for -Bi).
+// dependencies are scheduling tokens and do not represent data payloads.
+static spade::AISMEMRedMulEUploadOp createRedMulEUpload(
+    ConversionPatternRewriter &rewriter, Location loc, Value source,
+    Value sourceShape, Value spmAddress, ValueRange dependencies, int32_t tile,
+    bool negate) {
+  SmallVector<Value> operands{source, sourceShape, spmAddress};
+  operands.append(dependencies.begin(), dependencies.end());
+
+  SmallVector<Type> resultTypes{rewriter.getI32Type(), rewriter.getNoneType()};
+  SmallVector<NamedAttribute> attributes{
+      rewriter.getNamedAttr("tile", rewriter.getI32IntegerAttr(tile)),
+      rewriter.getNamedAttr("negate", rewriter.getBoolAttr(negate))};
+
+  return rewriter.create<spade::AISMEMRedMulEUploadOp>(
+      loc, resultTypes, operands, attributes);
+}
+
+// Zero the output Y region in private SPM before phase 1.
+static spade::AISMEMRedMulEZeroOp createRedMulEZero(
+    ConversionPatternRewriter &rewriter, Location loc, Value spmAddress,
+    ValueRange dependencies, int32_t tile, int32_t elements) {
+  SmallVector<Value> operands{spmAddress};
+  operands.append(dependencies.begin(), dependencies.end());
+
   SmallVector<Type> resultTypes{rewriter.getNoneType()};
   SmallVector<NamedAttribute> attributes{
       rewriter.getNamedAttr("tile", rewriter.getI32IntegerAttr(tile)),
-      rewriter.getNamedAttr("accumulate", rewriter.getBoolAttr(accumulate)),
-      rewriter.getNamedAttr("negateB", rewriter.getBoolAttr(negateB))};
+      rewriter.getNamedAttr("elements", rewriter.getI32IntegerAttr(elements))};
+
+  return rewriter.create<spade::AISMEMRedMulEZeroOp>(
+      loc, resultTypes, operands, attributes);
+}
+
+// Launch redmule.gemm using already-populated tile-private X/W/Y addresses.
+static spade::AISMEMRedMulEGEMMOp createRedMulEGEMM(
+    ConversionPatternRewriter &rewriter, Location loc, Value xAddress,
+    Value wAddress, Value yAddress, ValueRange dependencies, int32_t tile,
+    int32_t k, int32_t m, int32_t n) {
+  SmallVector<Value> operands{xAddress, wAddress, yAddress};
+  operands.append(dependencies.begin(), dependencies.end());
+
+  SmallVector<Type> resultTypes{rewriter.getNoneType()};
+  SmallVector<NamedAttribute> attributes{
+      rewriter.getNamedAttr("tile", rewriter.getI32IntegerAttr(tile)),
+      rewriter.getNamedAttr("k", rewriter.getI32IntegerAttr(k)),
+      rewriter.getNamedAttr("m", rewriter.getI32IntegerAttr(m)),
+      rewriter.getNamedAttr("n", rewriter.getI32IntegerAttr(n))};
 
   return rewriter.create<spade::AISMEMRedMulEGEMMOp>(
       loc, resultTypes, operands, attributes);
 }
 
-// Barrier for the RedMulE tiles selected by `mask`.
 static spade::AISMEMRedMulEWaitOp createRedMulEWait(
-    ConversionPatternRewriter &rewriter, Location loc, int32_t mask) {
+    ConversionPatternRewriter &rewriter, Location loc, ValueRange dependencies,
+    int32_t mask) {
+  SmallVector<Value> operands(dependencies.begin(), dependencies.end());
   SmallVector<Type> resultTypes{rewriter.getNoneType()};
   SmallVector<NamedAttribute> attributes{
       rewriter.getNamedAttr("mask", rewriter.getI32IntegerAttr(mask))};
 
   return rewriter.create<spade::AISMEMRedMulEWaitOp>(
-      loc, resultTypes, ValueRange{}, attributes);
+      loc, resultTypes, operands, attributes);
 }
 
-// Copy the persistent tile-local Y accumulator (`source`) into the
-// host-visible output buffer (`destination`).
+// Copy the persistent tile-private Y region back to a host-visible memref.
 static spade::AISMEMRedMulEDownloadOp createRedMulEDownload(
-    ConversionPatternRewriter &rewriter, Location loc, Value source,
-    Value destination, int32_t tile) {
-  SmallVector<Value> operands{source, destination};
+    ConversionPatternRewriter &rewriter, Location loc, Value spmAddress,
+    Value destination, Value dependency, int32_t tile, int32_t elements) {
+  SmallVector<Value> operands{spmAddress, destination, dependency};
   SmallVector<Type> resultTypes{rewriter.getNoneType()};
   SmallVector<NamedAttribute> attributes{
-      rewriter.getNamedAttr("tile", rewriter.getI32IntegerAttr(tile))};
+      rewriter.getNamedAttr("tile", rewriter.getI32IntegerAttr(tile)),
+      rewriter.getNamedAttr("elements", rewriter.getI32IntegerAttr(elements))};
 
   return rewriter.create<spade::AISMEMRedMulEDownloadOp>(
       loc, resultTypes, operands, attributes);
+}
+
+static LogicalResult getStaticGemmDimensions(Operation *op, Value ar, Value ai,
+    Value br, Value bi, int32_t &k, int32_t &m, int32_t &n,
+    int32_t &yElements) {
+  auto arType = dyn_cast<MemRefType>(ar.getType());
+  auto aiType = dyn_cast<MemRefType>(ai.getType());
+  auto brType = dyn_cast<MemRefType>(br.getType());
+  auto biType = dyn_cast<MemRefType>(bi.getType());
+
+  if (!arType || !aiType || !brType || !biType || arType.getRank() != 2 ||
+      aiType.getRank() != 2 || brType.getRank() != 2 || biType.getRank() != 2)
+    return op->emitError("RedMulE ComplexGEMM currently requires rank-2 memrefs");
+
+  if (!arType.hasStaticShape() || !aiType.hasStaticShape() ||
+      !brType.hasStaticShape() || !biType.hasStaticShape())
+    return op->emitError(
+        "RedMulE ComplexGEMM currently requires static matrix dimensions");
+
+  const int64_t m64 = arType.getDimSize(0);
+  const int64_t n64 = arType.getDimSize(1);
+  const int64_t k64 = brType.getDimSize(1);
+
+  if (aiType.getDimSize(0) != m64 || aiType.getDimSize(1) != n64 ||
+      brType.getDimSize(0) != n64 || biType.getDimSize(0) != n64 ||
+      biType.getDimSize(1) != k64)
+    return op->emitError("inconsistent split-complex GEMM matrix dimensions");
+
+  const int64_t maxI32 = std::numeric_limits<int32_t>::max();
+  const int64_t yElems64 = m64 * k64;
+  if (m64 > maxI32 || n64 > maxI32 || k64 > maxI32 || yElems64 > maxI32)
+    return op->emitError("RedMulE GEMM dimensions do not fit in i32");
+
+  // Match the redmule_gemm_async programming model exactly:
+  //   redmule_gemm_async(tile, x, w, y, K, M, N)
+  // For A[M x N] * B[N x K], this is K=k64, M=m64, N=n64.
+  k = static_cast<int32_t>(k64);
+  m = static_cast<int32_t>(m64);
+  n = static_cast<int32_t>(n64);
+  yElements = static_cast<int32_t>(yElems64);
+  return success();
 }
 
 } // namespace
@@ -117,12 +204,6 @@ struct AISLEComplexGEMMOpLowering : public ConversionPattern {
   using theOperation = spade::AISLEComplexGEMMOp;
   using theAdaptor = spade::AISLEComplexGEMMOpAdaptor;
 
-  // Deliberately do not attach the pass TypeConverter here.
-  //
-  // At this point the function ABI has already been bufferized to memrefs,
-  // while aisle.ComplexGEMM still has tensor operands/results surrounded by
-  // unrealized_conversion_cast bridges. This pattern consumes those bridges
-  // explicitly, exactly where the tensor/memref boundary is visible.
   AISLEComplexGEMMOpLowering(MLIRContext *ctx)
       : ConversionPattern(theOperation::getOperationName(), 1, ctx) {}
 
@@ -146,11 +227,8 @@ struct AISLEComplexGEMMOpLowering : public ConversionPattern {
 
     LLVM_DEBUG({ spade::dumpBlock(op); });
 
-    // The surrounding bufferization has produced:
-    //
-    //   memref -> unrealized_conversion_cast -> tensor -> aisle.ComplexGEMM
-    //
-    // AISMEM consumes memrefs, so unwrap the input-side bridge casts.
+    // Unwrap the tensor -> memref bridge casts produced by the surrounding
+    // bufferization pipeline.
     aisle_to_aismem::getConversionCastOperand(ar);
     aisle_to_aismem::getConversionCastOperand(arShape);
     aisle_to_aismem::getConversionCastOperand(ai);
@@ -160,81 +238,130 @@ struct AISLEComplexGEMMOpLowering : public ConversionPattern {
     aisle_to_aismem::getConversionCastOperand(bi);
     aisle_to_aismem::getConversionCastOperand(biShape);
 
+    int32_t k = 0, m = 0, n = 0, yElements = 0;
+    if (failed(getStaticGemmDimensions(
+            op, ar, ai, br, bi, k, m, n, yElements)))
+      return failure();
+
     MemRefType crType =
         aisle_to_aismem::convertTensorToMemRef(oldOp.getCr().getType());
     MemRefType ciType =
         aisle_to_aismem::convertTensorToMemRef(oldOp.getCi().getType());
 
-    // Host-visible result buffers. These escape through the converted function
-    // return, so no deallocation is inserted here.
     auto theDim = aisle_to_aismem::inferDim(op);
     auto crAlloc =
         aisle_to_aismem::insertAlloc(rewriter, loc, theDim, crType);
     auto ciAlloc =
         aisle_to_aismem::insertAlloc(rewriter, loc, theDim, ciType);
 
-    // Persistent per-tile Y accumulators (same shape/type as Cr/Ci). These are
-    // provisional AISMEM buffers that AISMEM->LLVM realizes as tile-local SPM
-    // rather than host memory, so no host dealloc is emitted here either.
-    auto yReal =
-        aisle_to_aismem::insertAlloc(rewriter, loc, theDim, crType);
-    auto yImag =
-        aisle_to_aismem::insertAlloc(rewriter, loc, theDim, ciType);
+    // ---------------------------------------------------------------------
+    // Establish each tile's private SPM base address.
+    // ---------------------------------------------------------------------
+    auto rm0Base = createRedMulEAddrStart(rewriter, loc, RMReal);
+    auto rm1Base = createRedMulEAddrStart(rewriter, loc, RMImag);
 
     // ---------------------------------------------------------------------
-    // Phase 1
-    //   RM0: Yr = Ar * Br
-    //   RM1: Yi = Ar * Bi
-    //
-    // accumulate=false tells the lower level to establish the tile-local SPM
-    // X/W/Y layout and clear Y before the asynchronous launch.
+    // Phase 1 / RM0
+    //   X <- Ar
+    //   W <- Br
+    //   Y <- 0
+    //   Y  = Ar * Br
     // ---------------------------------------------------------------------
-    auto phase1Real = createRedMulEGEMM(rewriter, loc, ar, arShape, br,
-        brShape, yReal.getResult(), RMReal, /*accumulate=*/false,
-        /*negateB=*/false);
-    auto phase1Imag = createRedMulEGEMM(rewriter, loc, ar, arShape, bi,
-        biShape, yImag.getResult(), RMImag, /*accumulate=*/false,
-        /*negateB=*/false);
-    auto phase1Wait = createRedMulEWait(rewriter, loc, RMMask);
+    auto rm0P1X = createRedMulEUpload(rewriter, loc, ar, arShape,
+        rm0Base.getAddress(), ValueRange{}, RMReal, /*negate=*/false);
+
+    // rm0P1X.next_address is the W address.
+    auto rm0P1W = createRedMulEUpload(rewriter, loc, br, brShape,
+        rm0P1X.getNextAddress(), ValueRange{rm0P1X.getNoneVal()}, RMReal,
+        /*negate=*/false);
+
+    // rm0P1W.next_address is the persistent Y address.
+    auto rm0P1Zero = createRedMulEZero(rewriter, loc,
+        rm0P1W.getNextAddress(), ValueRange{rm0P1W.getNoneVal()}, RMReal,
+        yElements);
+
+    auto rm0P1Gemm = createRedMulEGEMM(rewriter, loc, rm0Base.getAddress(),
+        rm0P1X.getNextAddress(), rm0P1W.getNextAddress(),
+        ValueRange{rm0P1Zero.getNoneVal()}, RMReal, k, m, n);
 
     // ---------------------------------------------------------------------
-    // Phase 2
-    //   RM0: Yr += Ai * (-Bi)
-    //   RM1: Yi += Ai * Br
-    //
-    // accumulate=true means X/W are rewritten but Y must remain untouched.
-    // negateB=true on RM0 requests FP16 sign-bit negation while Bi is uploaded.
+    // Phase 1 / RM1
+    //   X <- Ar
+    //   W <- Bi
+    //   Y <- 0
+    //   Y  = Ar * Bi
     // ---------------------------------------------------------------------
-    auto phase2Real = createRedMulEGEMM(rewriter, loc, ai, aiShape, bi,
-        biShape, yReal.getResult(), RMReal, /*accumulate=*/true,
-        /*negateB=*/true);
-    auto phase2Imag = createRedMulEGEMM(rewriter, loc, ai, aiShape, br,
-        brShape, yImag.getResult(), RMImag, /*accumulate=*/true,
-        /*negateB=*/false);
-    auto phase2Wait = createRedMulEWait(rewriter, loc, RMMask);
+    auto rm1P1X = createRedMulEUpload(rewriter, loc, ar, arShape,
+        rm1Base.getAddress(), ValueRange{}, RMImag, /*negate=*/false);
 
-    // Only after the second barrier are the persistent tile-local Y buffers
-    // copied to the host-visible output memrefs.
-    auto downloadReal = createRedMulEDownload(rewriter, loc, yReal.getResult(),
-        crAlloc.getResult(), RMReal);
-    auto downloadImag = createRedMulEDownload(rewriter, loc, yImag.getResult(),
-        ciAlloc.getResult(), RMImag);
+    auto rm1P1W = createRedMulEUpload(rewriter, loc, bi, biShape,
+        rm1P1X.getNextAddress(), ValueRange{rm1P1X.getNoneVal()}, RMImag,
+        /*negate=*/false);
 
-    // Keep the explicit schedule contiguous and *after every allocation*, so
-    // each Y use is dominated by its def. This also keeps graph.test.aismem
-    // deterministic while the AISMEM->LLVM lowering is developed.
-    phase1Real->moveAfter(yImag);
-    phase1Imag->moveAfter(phase1Real);
-    phase1Wait->moveAfter(phase1Imag);
-    phase2Real->moveAfter(phase1Wait);
-    phase2Imag->moveAfter(phase2Real);
-    phase2Wait->moveAfter(phase2Imag);
-    downloadReal->moveAfter(phase2Wait);
-    downloadImag->moveAfter(downloadReal);
+    auto rm1P1Zero = createRedMulEZero(rewriter, loc,
+        rm1P1W.getNextAddress(), ValueRange{rm1P1W.getNoneVal()}, RMImag,
+        yElements);
 
-    // AISLE still has tensor SSA results while AISMEM writes explicit memrefs.
-    // Bridge the newly allocated result buffers back to the same tensor types
-    // as the old AISLE results. This keeps replaceOp type-preserving.
+    auto rm1P1Gemm = createRedMulEGEMM(rewriter, loc, rm1Base.getAddress(),
+        rm1P1X.getNextAddress(), rm1P1W.getNextAddress(),
+        ValueRange{rm1P1Zero.getNoneVal()}, RMImag, k, m, n);
+
+    auto phase1Wait = createRedMulEWait(rewriter, loc,
+        ValueRange{rm0P1Gemm.getNoneVal(), rm1P1Gemm.getNoneVal()}, RMMask);
+
+    // ---------------------------------------------------------------------
+    // Phase 2 / RM0
+    //   overwrite X at its original address with Ai
+    //   overwrite W at its original address with -Bi
+    //   DO NOT zero Y
+    //   Y += Ai * (-Bi)
+    // ---------------------------------------------------------------------
+    auto rm0P2X = createRedMulEUpload(rewriter, loc, ai, aiShape,
+        rm0Base.getAddress(), ValueRange{phase1Wait.getNoneVal()}, RMReal,
+        /*negate=*/false);
+
+    auto rm0P2W = createRedMulEUpload(rewriter, loc, bi, biShape,
+        rm0P1X.getNextAddress(), ValueRange{rm0P2X.getNoneVal()}, RMReal,
+        /*negate=*/true);
+
+    auto rm0P2Gemm = createRedMulEGEMM(rewriter, loc, rm0Base.getAddress(),
+        rm0P1X.getNextAddress(), rm0P1W.getNextAddress(),
+        ValueRange{rm0P2W.getNoneVal()}, RMReal, k, m, n);
+
+    // ---------------------------------------------------------------------
+    // Phase 2 / RM1
+    //   overwrite X at its original address with Ai
+    //   overwrite W at its original address with Br
+    //   DO NOT zero Y
+    //   Y += Ai * Br
+    // ---------------------------------------------------------------------
+    auto rm1P2X = createRedMulEUpload(rewriter, loc, ai, aiShape,
+        rm1Base.getAddress(), ValueRange{phase1Wait.getNoneVal()}, RMImag,
+        /*negate=*/false);
+
+    auto rm1P2W = createRedMulEUpload(rewriter, loc, br, brShape,
+        rm1P1X.getNextAddress(), ValueRange{rm1P2X.getNoneVal()}, RMImag,
+        /*negate=*/false);
+
+    auto rm1P2Gemm = createRedMulEGEMM(rewriter, loc, rm1Base.getAddress(),
+        rm1P1X.getNextAddress(), rm1P1W.getNextAddress(),
+        ValueRange{rm1P2W.getNoneVal()}, RMImag, k, m, n);
+
+    auto phase2Wait = createRedMulEWait(rewriter, loc,
+        ValueRange{rm0P2Gemm.getNoneVal(), rm1P2Gemm.getNoneVal()}, RMMask);
+
+    // ---------------------------------------------------------------------
+    // Download persistent Y from each private SPM into the ordinary output
+    // memrefs.  These correspond to RM0.Y -> Cr and RM1.Y -> Ci.
+    // ---------------------------------------------------------------------
+    auto downloadReal = createRedMulEDownload(rewriter, loc,
+        rm0P1W.getNextAddress(), crAlloc.getResult(), phase2Wait.getNoneVal(),
+        RMReal, yElements);
+
+    auto downloadImag = createRedMulEDownload(rewriter, loc,
+        rm1P1W.getNextAddress(), ciAlloc.getResult(), phase2Wait.getNoneVal(),
+        RMImag, yElements);
+
     Value crTensor =
         rewriter
             .create<UnrealizedConversionCastOp>(
@@ -248,6 +375,7 @@ struct AISLEComplexGEMMOpLowering : public ConversionPattern {
 
     rewriter.replaceOp(oldOp, ValueRange{crTensor, ciTensor});
 
+    (void)downloadReal;
     LLVM_DEBUG({ spade::dumpBlock(downloadImag); });
     return success();
   }

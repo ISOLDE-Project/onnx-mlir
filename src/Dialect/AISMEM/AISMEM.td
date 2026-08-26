@@ -1,4 +1,3 @@
-
 // SPDX-License-Identifier: Apache-2.0
 
 //===--- AISMEM.td -- AISMEM Dialect Operation Definitions ----*- tablegen -===//
@@ -248,43 +247,71 @@ def AISMEMComplexGEMMOp: AISMEM_Op<"ComplexGEMM", [Pure]> {
 // RedMulE scheduled operations
 //===----------------------------------------------------------------------===//
 
-// One asynchronous GEMM launch on a selected RedMulE tile.
-//
-// accumulate = false:
-//   initialize tile-local X/W/Y SPM storage, zero Y, then launch GEMM.
-// accumulate = true:
-//   update tile-local X/W only, preserve Y, then launch GEMM so the hardware
-//   accumulates into the existing Y value.
-// negateB = true requests raw FP16 sign-bit negation while B is uploaded.
-def AISMEMRedMulEGEMMOp: AISMEM_Op<"RedMulEGEMM"> {
-  let summary = "Asynchronous GEMM launch on a selected RedMulE tile";
-  let description = [{
-    Launches one GEMM on a selected RedMulE tile while keeping tile-local SPM
-    state explicit in the operation semantics.
-
-    With accumulate=false, lowering initializes the tile SPM layout and zeroes
-    Y before launch. With accumulate=true, lowering rewrites only X and W and
-    preserves the previous Y so the next GEMM accumulates into it.
-
-    negateB is intended for split-complex GEMM phase 2, where RM0 computes
-    Ai * (-Bi). For FP16 this is implemented as raw sign-bit negation during
-    upload, not scalar floating-point arithmetic.
-
-    Y is the persistent tile-local accumulator, carried as an explicit memref
-    operand with a read+write effect. The write effect keeps the launch out of
-    dead-code elimination, and the read+write makes phase1 -> phase2 -> download
-    a real memory dependency instead of relying on textual order. tile is an i32
-    index to match the rv32im core.
-  }];
+// Return get_addr_start(bank) for one RedMulE tile.  The tile attribute keeps
+// TILESEL explicit so AISMEM -> LLVM can emit isolde_set_tile(tile) before
+// querying the private SPM address window.
+def AISMEMRedMulEAddrStartOp: AISMEM_Op<"RedMulEAddrStart"> {
+  let summary = "Get the first private SPM address for a RedMulE tile";
   let arguments = (ins
-    Arg<AnyMemRef, "A", [MemRead]>:$A,
-    Arg<AnyMemRef, "A_Shape", [MemRead]>:$A_shape,
-    Arg<AnyMemRef, "B", [MemRead]>:$B,
-    Arg<AnyMemRef, "B_Shape", [MemRead]>:$B_shape,
-    Arg<AnyMemRef, "Y", [MemRead, MemWrite]>:$Y,
     I32Attr:$tile,
-    DefaultValuedAttr<BoolAttr, "false">:$accumulate,
-    DefaultValuedAttr<BoolAttr, "false">:$negateB
+    DefaultValuedAttr<I32Attr, "0">:$bank
+  );
+  let results = (outs I32:$address);
+}
+
+// Host -> private SPM transfer.  spm_address is the destination address in the
+// selected tile's private SPM.  next_address models the address returned by
+// spm_write and is used to lay out X, then W, then Y exactly as in the C
+// programming model.
+//
+// negate=true performs raw FP16 sign-bit negation while copying.  This belongs
+// on the upload operation (not GEMM), because the reference implementation
+// forms -Bi while writing Bi into SPM.
+def AISMEMRedMulEUploadOp: AISMEM_Op<"RedMulEUpload"> {
+  let summary = "Upload a host matrix into private RedMulE SPM";
+  let arguments = (ins
+    Arg<AnyMemRef, "source", [MemRead]>:$source,
+    Arg<AnyMemRef, "source shape", [MemRead]>:$source_shape,
+    I32:$spm_address,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$tile,
+    DefaultValuedAttr<BoolAttr, "false">:$negate
+  );
+  let results = (outs
+    I32:$next_address,
+    NoneType:$none_val
+  );
+}
+
+// Initialize the persistent Y region in private SPM to zero.  This operation
+// is emitted only before phase 1.  Phase 2 intentionally omits it so that the
+// second GEMM accumulates into the phase-1 Y value.
+def AISMEMRedMulEZeroOp: AISMEM_Op<"RedMulEZero"> {
+  let summary = "Zero a RedMulE private SPM region";
+  let arguments = (ins
+    I32:$spm_address,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$tile,
+    I32Attr:$elements
+  );
+  let results = (outs NoneType:$none_val);
+}
+
+// Launch one asynchronous redmule.gemm using addresses that already refer to
+// private SPM.  K/M/N match the redmule_gemm_async programming-model argument
+// order and are explicit i32 attributes because they eventually become
+// instruction immediates.
+def AISMEMRedMulEGEMMOp: AISMEM_Op<"RedMulEGEMM"> {
+  let summary = "Launch GEMM from already-populated RedMulE private SPM";
+  let arguments = (ins
+    I32:$x_spm_address,
+    I32:$w_spm_address,
+    I32:$y_spm_address,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$tile,
+    I32Attr:$k,
+    I32Attr:$m,
+    I32Attr:$n
   );
   let results = (outs NoneType:$none_val);
 }
@@ -294,20 +321,23 @@ def AISMEMRedMulEGEMMOp: AISMEM_Op<"RedMulEGEMM"> {
 def AISMEMRedMulEWaitOp: AISMEM_Op<"RedMulEWait"> {
   let summary = "Wait for a mask of RedMulE tiles";
   let arguments = (ins
+    Variadic<NoneType>:$dependencies,
     I32Attr:$mask
   );
   let results = (outs NoneType:$none_val);
 }
 
-// Copy the persistent tile-local Y SPM buffer (source operand $Y, read) into a
-// host-visible output memref ($destination, written) after the final phase has
-// completed. Reading $Y ties the download to the GEMMs that produced it.
+// Private SPM -> host transfer.  spm_address is normally the persistent Y
+// address established during phase 1.  The dependency is the final wait token,
+// preventing the readback from moving before accelerator completion.
 def AISMEMRedMulEDownloadOp: AISMEM_Op<"RedMulEDownload"> {
-  let summary = "Download the persistent Y result from a RedMulE tile";
+  let summary = "Download a RedMulE private SPM region to host memory";
   let arguments = (ins
-    Arg<AnyMemRef, "Y", [MemRead]>:$Y,
+    I32:$spm_address,
     Arg<AnyMemRef, "destination", [MemWrite]>:$destination,
-    I32Attr:$tile
+    NoneType:$dependency,
+    I32Attr:$tile,
+    I32Attr:$elements
   );
   let results = (outs NoneType:$none_val);
 }
