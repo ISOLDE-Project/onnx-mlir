@@ -27,7 +27,7 @@ compiler:
 
 
 config: 
-	 rm -rf build && mkdir -p build && cd build && \
+	rm -rf build && mkdir -p build && cd build && \
 	$(CMAKE)   \
 	-DCMAKE_CXX_STANDARD=17 \
 	-DCMAKE_EXPORT_COMPILE_COMMANDS=1 \

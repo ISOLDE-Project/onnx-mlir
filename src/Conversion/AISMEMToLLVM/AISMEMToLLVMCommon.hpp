@@ -19,6 +19,14 @@ struct AISMEMTypeConverter : public ::mlir::LLVMTypeConverter {
       mlir::MLIRContext *ctx, const mlir::LowerToLLVMOptions &options)
       : ::mlir::LLVMTypeConverter(ctx, options) {
 
+    // AISMEM uses !none results as explicit scheduling tokens.  They carry no
+    // data, but converting them to i1 lets a lowering replace the token with a
+    // constant after emitting the side-effecting LLVM call.  This preserves
+    // SSA ordering until the AISMEM operation itself has been eliminated.
+    addConversion([ctx](NoneType) -> Type {
+      return IntegerType::get(ctx, 1);
+    });
+
     addConversion([ctx](MemRefType type) -> Type {
       return LLVM::LLVMPointerType::get(ctx);
     });

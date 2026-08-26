@@ -63,6 +63,8 @@ void populateAISMEMToLLVMConversionPattern(RewritePatternSet &patterns,
   populateMemrefAllocOpPattern(typeConverter, patterns, ctx);
   // GEMM
   populateLoweringAISMEMGEMMOpPattern(typeConverter, patterns, ctx);
+  // Explicit RedMulE/SPM schedule.
+  populateLoweringAISMEMRedMulEOpPatterns(typeConverter, patterns, ctx);
   // DMA Start
   populateMemrefDmaStartOpPattern(typeConverter, patterns, ctx);
   // DMA Wait
@@ -115,6 +117,10 @@ void AISMEMToLLVMLoweringPass::runOnOperation() {
   target.addLegalDialect<spade::AISLLVMDialect>();
   target.addLegalOp<ModuleOp>();
   target.addLegalOp<UnrealizedConversionCastOp>();
+  target.addIllegalOp<spade::AISMEMRedMulEAddrStartOp,
+      spade::AISMEMRedMulEUploadOp, spade::AISMEMRedMulEZeroOp,
+      spade::AISMEMRedMulEGEMMOp, spade::AISMEMRedMulEWaitOp,
+      spade::AISMEMRedMulEDownloadOp>();
 
   LowerToLLVMOptions options(ctx);
   options.allocLowering = LowerToLLVMOptions::AllocLowering::None;

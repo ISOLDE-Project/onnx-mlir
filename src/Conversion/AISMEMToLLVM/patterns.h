@@ -31,6 +31,9 @@ void populateMemrefAllocOpPattern(LLVMTypeConverter &typeConverter,
 void populateLoweringAISMEMGEMMOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);
 
+void populateLoweringAISMEMRedMulEOpPatterns(LLVMTypeConverter &typeConverter,
+    RewritePatternSet &patterns, MLIRContext *ctx);
+
 void populateMemrefDmaStartOpPattern(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx);
 

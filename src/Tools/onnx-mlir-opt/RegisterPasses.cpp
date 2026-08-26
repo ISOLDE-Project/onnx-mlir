@@ -109,6 +109,10 @@ void registerOMPasses(int optLevel) {
   });
 
   mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+    return spade::createLowerToLLVMIRPass();
+  });
+
+  mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
     return createSimplifyShapeRelatedOpsPass();
   });
 

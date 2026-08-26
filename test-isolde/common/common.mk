@@ -131,48 +131,38 @@ libsim.a : startup.c.o
 	$(AR) rcs $@ $^
 
 
-## Generate object, LLVM IR, and ONNX IR
-graph:  $(ONNX_MODEL) 
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitObj -o $@  $<
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitObj -o $@  $<
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitLLVMIR -o $@  $<
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitLLVMIR -o $@  $<
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitONNXIR -o $@  $<
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitONNXIR -o $@  $<
 
-## Test normal ONNX lowering	
-graph.test :  $(ONNX_MODEL) 	
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitMLIR   -o graph  $<
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir --mtriple=riscv32-unknown-elf --EmitLLVM   -o graph  $<
 
-## Emit AISLE / SPADE IR
-graph.test.aisle :  $(ONNX_MODEL) 	
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
+.PHONY: graph
+## Test complete lowering	         Layer  0 -> Layer -3 ->llvm
+graph: graph.test.onnx graph.test.aisle graph.test.aismem graph.test.aisllvmir graph.test.aisllvm print_config
+
+
+## Emit ONNX IR                    Layer  0: ONNX Dialect
+graph.test.onnx:  $(ONNX_MODEL) 	
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
+	@echo "🔔 $(TEST_CASE_DIR)/graph.onnx.onnxir"
+
+## Emit AISLE / SPADE IR - AISLE - Layer -1: AutomotIve demonStrator mLir dialEct 
+graph.test.aisle:  $(ONNX_MODEL) 	
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEIR -o graph  $<
+	@echo "🔔 $(TEST_CASE_DIR)/graph.spade.aisle"
 
-## Emit AISMEM / SPADE MLIR
-graph.test.aismem :  $(ONNX_MODEL) 	
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
+## Emit AISMEM / SPADE MLIR        Layer -2: AISMEM AutomotIve DemonStrator MEMref dialect
+graph.test.aismem:  $(ONNX_MODEL) 	
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph $(DIALECT_DEBUG)   $<
 	@echo "🔔 $(TEST_CASE_DIR)/graph.spade.mlir"
 
-## Emit AISLLVM IR
-graph.test.aisllvmir :  $(ONNX_MODEL) 	
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
+## Emit AISLLVM IR                 Layer -3: AISLLVM AutomotIve DemonStrator LLVM dialect
+graph.test.aisllvmir:  $(ONNX_MODEL) 	
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVMIR -o graph  $<
+	@echo "🔔 $(TEST_CASE_DIR)/graph.spade.llvm"
 
-
-graph.test.aisllvm :  $(ONNX_MODEL) 	
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
+## Emit llvm and obj
+graph.test.aisllvm:  $(ONNX_MODEL) 	
 	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVM -o graph  $<
+	@echo "🔔 $(TEST_CASE_DIR)/graph.ll"
 
-## Emit ONNX IR
-graph.test.onnx :  $(ONNX_MODEL) 	
-	@echo +++ $(ONNX_INSTALL_DIR)/bin/onnx-mlir 
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
-	
 
 .PHONY: clean
 clean:
@@ -204,7 +194,7 @@ print_config:
 	@echo $(BANNER)
 	@echo onnx-mlir=$(ONNX_INSTALL_DIR)/bin/onnx-mlir
 	@echo TEST_CASE_DIR=$(TEST_CASE_DIR)
-	@echo $(BANNER)
+# 	@echo $(BANNER)
 	@echo CC=$(CC)
 	@echo CXX=$(CXX)
 # 	@echo OBJDUMP=$(OBJDUMP)
