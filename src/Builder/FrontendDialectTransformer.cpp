@@ -1301,20 +1301,36 @@ private:
     }
   }
 
-  void ImportRedMulEComplexGemmNode(const onnx::NodeProto &node) {
-    // Keep the custom domain explicit so a coincidentally named operator from
-    // another vendor still falls back to the generic ONNXCustomOp path.
-    if (node.domain() != "com.isolde") {
-      ImportCustomNode(node);
+  // ISOLDE custom-domain ops.  The op_type alone selects the handler, so the
+  // domain is checked here: a coincidentally named operator from another
+  // vendor (e.g. com.microsoft::MultiHeadAttention) takes the generic path,
+  // i.e. its schema/model-local function body or onnx.Custom.
+  static constexpr const char *kIsoldeDomain = "com.isolde";
+
+  template <typename T>
+  void ImportIsoldeNode(const onnx::NodeProto &node) {
+    if (node.domain() != kIsoldeDomain) {
+      ImportNodeWithoutHandler(node);
       return;
     }
 
     std::vector<Value> inputs;
     getNodeInputs(node, inputs);
     auto attributes = ImportNodeAttributes(node);
-    buildOutputAndOperation<ONNXRedMulEComplexGemmOp>(node, inputs,
-        ONNXRedMulEComplexGemmOp::getNumberOfOperands(),
-        ONNXRedMulEComplexGemmOp::getNumberOfResults(), attributes);
+    buildOutputAndOperation<T>(node, inputs, T::getNumberOfOperands(),
+        T::getNumberOfResults(), attributes);
+  }
+
+  void ImportRedMulEComplexGemmNode(const onnx::NodeProto &node) {
+    ImportIsoldeNode<ONNXRedMulEComplexGemmOp>(node);
+  }
+
+  void ImportMultiHeadAttentionNode(const onnx::NodeProto &node) {
+    ImportIsoldeNode<ONNXMultiHeadAttentionOp>(node);
+  }
+
+  void ImportPositionwiseFeedForwardNode(const onnx::NodeProto &node) {
+    ImportIsoldeNode<ONNXPositionwiseFeedForwardOp>(node);
   }
 
   void ImportCustomNode(const onnx::NodeProto &node) {
@@ -1349,7 +1365,13 @@ private:
         return;
       }
     }
+    ImportNodeWithoutHandler(node);
+  }
 
+  // Import a node that has no dedicated handler (or whose handler declined
+  // it): expand its schema function or model-local function, and fall back to
+  // onnx.Custom.
+  void ImportNodeWithoutHandler(const onnx::NodeProto &node) {
     const onnx::OpSchema *schema = GetOpSchema(node);
     if (schema &&
         (schema->HasFunction() || schema->HasContextDependentFunction())) {
@@ -1376,6 +1398,13 @@ private:
     // the generated upstream ONNX op build table.
     import_handler_map_["RedMulEComplexGemm"] =
         &onnx_mlir::detail::FrontendGenImpl::ImportRedMulEComplexGemmNode;
+    // Transformer building blocks (Vaswani et al. 2017).  A model normally
+    // also carries a model-local FunctionProto for these; the handler wins
+    // unless the op is listed in --functions-to-decompose.
+    import_handler_map_["MultiHeadAttention"] =
+        &onnx_mlir::detail::FrontendGenImpl::ImportMultiHeadAttentionNode;
+    import_handler_map_["PositionwiseFeedForward"] =
+        &onnx_mlir::detail::FrontendGenImpl::ImportPositionwiseFeedForwardNode;
   }
 
   /*!

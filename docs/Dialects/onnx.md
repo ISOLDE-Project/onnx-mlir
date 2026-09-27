@@ -5353,6 +5353,67 @@ Effects: `MemoryEffects::Effect{}`
 | :----: | ----------- |
 | `C` | tensor of 8-bit unsigned integer values or tensor of 16-bit unsigned integer values or tensor of 32-bit unsigned integer values or tensor of 64-bit unsigned integer values or tensor of 8-bit signless integer values or tensor of 16-bit signless integer values or tensor of 32-bit signless integer values or tensor of 64-bit signless integer values or tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values or tensor of bfloat16 type values
 
+### `onnx.MultiHeadAttention` (ONNXMultiHeadAttentionOp)
+
+_ISOLDE multi-head attention (Vaswani et al. 2017, sec. 3.2)_
+
+Computes
+
+  MultiHead(Xq, Xkv) = Concat(head_1, ..., head_h) Wo  (+ C)
+  head_i = Attention(Xq Wq_i, Xkv Wk_i, Xkv Wv_i)
+  Attention(Q, K, V) = norm(Q K^T * scale) V
+
+with h = `num_heads`; the heads are laid out contiguously along the output
+columns of Wq, Wk and Wv.  Self-attention uses Xq == Xkv.
+
+`normalization` selects the score normalization:
+  * "softmax": softmax over the key axis (the paper, eq. 1);
+  * "relu":    ReLU(.) * post_scale  (ReLU attention, Wortsman et al.
+               2023; used by the ISOLDE radar_attention encoder).
+`post_scale` must be 1.0 for "softmax".  When `scale` is absent it
+defaults to 1/sqrt(d_k), d_k = Wq.shape[1] / num_heads.
+
+Xq: [B, Lq, Dq] or [Lq, Dq]; Xkv: [B, Lkv, Dkv] or [Lkv, Dkv];
+Wq: [Dq, Dk*h]; Wk: [Dkv, Dk*h]; Wv: [Dkv, Dv*h]; Wo: [Dv*h, Do];
+C (optional): same shape as Y; Y: [B, Lq, Do] or [Lq, Do].
+
+This operation is an ISOLDE extension (domain com.isolde) and is not part
+of standard ONNX.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `ShapeInferenceOpInterface`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>num_heads</code></td><td>::mlir::IntegerAttr</td><td>64-bit signed integer attribute</td></tr>
+<tr><td><code>scale</code></td><td>::mlir::FloatAttr</td><td>32-bit float attribute</td></tr>
+<tr><td><code>post_scale</code></td><td>::mlir::FloatAttr</td><td>32-bit float attribute</td></tr>
+<tr><td><code>normalization</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `Xq` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Xkv` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wq` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wk` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wv` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wo` | tensor of 16-bit float values or tensor of 32-bit float values
+| `C` | tensor of 16-bit float values or tensor of 32-bit float values or none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `Y` | tensor of 16-bit float values or tensor of 32-bit float values
+
 ### `onnx.Multinomial` (ONNXMultinomialOp)
 
 _ONNX Multinomial operation_
@@ -6448,6 +6509,52 @@ Effects: `MemoryEffects::Effect{}`
 | :----: | ----------- |
 | `output` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values
 
+### `onnx.PositionwiseFeedForward` (ONNXPositionwiseFeedForwardOp)
+
+_ISOLDE position-wise feed-forward network (Vaswani et al. 2017, eq. 2)_
+
+Computes
+
+  FFN(X) = activation(X W1) W2  (+ C)
+
+applied to every position independently.  The biases b1, b2 of the paper
+are not represented (the ISOLDE encoder has none); `activation` is "relu",
+the only value accepted today.
+
+X: [B, L, D] or [L, D]; W1: [D, Dff]; W2: [Dff, Do];
+C (optional): same shape as Y; Y: [B, L, Do] or [L, Do].
+
+This operation is an ISOLDE extension (domain com.isolde) and is not part
+of standard ONNX.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `ShapeInferenceOpInterface`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>activation</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `X` | tensor of 16-bit float values or tensor of 32-bit float values
+| `W1` | tensor of 16-bit float values or tensor of 32-bit float values
+| `W2` | tensor of 16-bit float values or tensor of 32-bit float values
+| `C` | tensor of 16-bit float values or tensor of 32-bit float values or none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `Y` | tensor of 16-bit float values or tensor of 32-bit float values
+
 ### `onnx.Pow` (ONNXPowOp)
 
 _ONNX Pow operation_
@@ -7014,6 +7121,42 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `Y` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values or tensor of bfloat16 type values
+
+### `onnx.RedMulEComplexGemm` (ONNXRedMulEComplexGemmOp)
+
+_ISOLDE RedMulE split-complex GEMM_
+
+Computes a matrix multiplication on split-complex tensors:
+
+  Cr = Ar * Br - Ai * Bi
+  Ci = Ar * Bi + Ai * Br
+
+Ar/Ai are the real/imaginary components of A.
+Br/Bi are the real/imaginary components of B.
+
+This operation is an ISOLDE extension and is not part of standard ONNX.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `Ar` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Ai` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Br` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Bi` | tensor of 16-bit float values or tensor of 32-bit float values
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `Cr` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Ci` | tensor of 16-bit float values or tensor of 32-bit float values
 
 ### `onnx.ReduceL1` (ONNXReduceL1Op)
 

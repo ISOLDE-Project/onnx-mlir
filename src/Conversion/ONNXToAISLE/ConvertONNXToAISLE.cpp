@@ -25,6 +25,10 @@ void populateONNXToAISLEConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXToAISLEComplexGEMMOpPattern(
       patterns, typeConverter, ctx);
 
+  // ISOLDE transformer blocks. Keep them intact in AISLE.
+  populateLoweringONNXToAISLETransformerOpPatterns(
+      patterns, typeConverter, ctx);
+
   // GEMM
   populateLoweringONNXToAISLEGEMMOpPattern(
       patterns, typeConverter, ctx, enableParallel);
@@ -44,6 +48,11 @@ struct ONNXToAISLELoweringPass
 
   StringRef getDescription() const override {
     return "Lower (some)ONNX ops to AISLE dialect.";
+  }
+
+  // Needed when the input IR does not already mention AISLE (onnx-mlir-opt).
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<spade::AISLEDialect>();
   }
 
   // Make sure that we have a valid default constructor and copy
@@ -95,6 +104,10 @@ public:
 void ONNXToAISLELoweringPass::runOnOperation() {
   ModuleOp module = getOperation();
 
+  // Fold attention scales into constant weights and residual Adds into the
+  // transformer blocks' accumulator before they cross into AISLE.
+  fuseTransformerBlocks(module);
+
   // The first thing to define is the conversion target. This will define the
   // final target for this lowering.
   ConversionTarget target(getContext());
@@ -112,6 +125,10 @@ void ONNXToAISLELoweringPass::runOnOperation() {
   target.addLegalOp<mlir::ONNXConstantOp>();
   target.addLegalOp<mlir::ONNXEntryPointOp>();
   target.addLegalOp<func::ReturnOp>();
+  // The transformer blocks have no Krnl lowering: they must reach AISLE (or
+  // be decomposed at import time with --functions-to-decompose).
+  target.addIllegalOp<mlir::ONNXMultiHeadAttentionOp,
+      mlir::ONNXPositionwiseFeedForwardOp>();
 
   /*
     if (emitIntermediateIR) {

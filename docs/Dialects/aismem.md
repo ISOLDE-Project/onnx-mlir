@@ -27,6 +27,47 @@ Effects: `MemoryEffects::Effect{}`
 | :----: | ----------- |
 | `none_val` | none type
 
+### `aismem.ComplexGEMM` (::spade::AISMEMComplexGEMMOp)
+
+_AISMEM split-complex GEMM operator_
+
+Computes a split-complex matrix multiplication:
+
+  Cr = Ar * Br - Ai * Bi
+  Ci = Ar * Bi + Ai * Br
+
+Ar/Ai and Br/Bi are split real/imaginary input buffers. Cr and Ci are
+explicit output buffers. This operation preserves complex-GEMM semantics
+at the AISMEM level; RedMulE tile assignment, SPM residency, phase
+scheduling, and sign-bit negation are lower-level decisions.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `Ar` | memref of any type values
+| `Ar_shape` | memref of any type values
+| `Ai` | memref of any type values
+| `Ai_shape` | memref of any type values
+| `Br` | memref of any type values
+| `Br_shape` | memref of any type values
+| `Bi` | memref of any type values
+| `Bi_shape` | memref of any type values
+| `Cr` | memref of any type values
+| `Ci` | memref of any type values
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
+
 ### `aismem.ConvEx` (::spade::AISMEMConvExOp)
 
 _AISMEM ConvEx operation_
@@ -217,6 +258,197 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `output` | memref of any type values
+
+### `aismem.RedMulEAddrStart` (::spade::AISMEMRedMulEAddrStartOp)
+
+_Get the first private SPM address for a RedMulE tile_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>bank</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `address` | 32-bit signless integer
+
+### `aismem.RedMulEDownload` (::spade::AISMEMRedMulEDownloadOp)
+
+_Download a RedMulE private SPM region to host memory_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>elements</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `spm_address` | 32-bit signless integer
+| `destination` | memref of any type values
+| `dependency` | none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
+
+### `aismem.RedMulEGEMM` (::spade::AISMEMRedMulEGEMMOp)
+
+_Launch GEMM from already-populated RedMulE private SPM_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>k</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>m</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>n</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `x_spm_address` | 32-bit signless integer
+| `w_spm_address` | 32-bit signless integer
+| `y_spm_address` | 32-bit signless integer
+| `dependencies` | variadic of none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
+
+### `aismem.RedMulEUpload` (::spade::AISMEMRedMulEUploadOp)
+
+_Upload a host matrix into private RedMulE SPM_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>negate</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | memref of any type values
+| `source_shape` | memref of any type values
+| `spm_address` | 32-bit signless integer
+| `dependencies` | variadic of none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `next_address` | 32-bit signless integer
+| `none_val` | none type
+
+### `aismem.RedMulEUploadTile` (::spade::AISMEMRedMulEUploadTileOp)
+
+_Upload a transformed 2-D window of a host matrix into private RedMulE SPM_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>row_offset</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>col_offset</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>rows</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>cols</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>dst_rows</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>dst_cols</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>transpose</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
+<tr><td><code>relu</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
+<tr><td><code>negate</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | memref of any type values
+| `spm_address` | 32-bit signless integer
+| `dependencies` | variadic of none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `next_address` | 32-bit signless integer
+| `none_val` | none type
+
+### `aismem.RedMulEWait` (::spade::AISMEMRedMulEWaitOp)
+
+_Wait for a mask of RedMulE tiles_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>mask</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `dependencies` | variadic of none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
+
+### `aismem.RedMulEZero` (::spade::AISMEMRedMulEZeroOp)
+
+_Zero a RedMulE private SPM region_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>elements</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `spm_address` | 32-bit signless integer
+| `dependencies` | variadic of none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
 
 ### `aismem.ReduceMean` (::spade::AISMEMReduceMeanOp)
 

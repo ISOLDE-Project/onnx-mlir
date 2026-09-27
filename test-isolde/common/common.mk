@@ -4,7 +4,7 @@
 ifndef ROOT_DIR
 $(error ROOT_DIR is not defined. Please execute'source eth.sh' from top folder.)
 endif
-TEST_CASE           :=  complex_gemm
+TEST_CASE           ?=  undefined
 TEST_CASE_DIR       :=  $(ROOT_DIR)/test-isolde/$(TEST_CASE)
 BANNER              :=  "💡 🏲  $(TEST_CASE) 🏲"
 
@@ -93,10 +93,11 @@ ONNX_MLIR_FLAGS			?=
 TOOLS_INSTALL_DIR       ?= ${ROOT_DIR}/install/onnx-mlir/py-codegen
 EXPORT_ELF              ?= ${ROOT_DIR}/HLS/aida/build/bin/export_elf
 
-## check for Python environment
-check-conda-ibex:
-	@if [ "$$CONDA_DEFAULT_ENV" != "ibex" ]; then \
-		echo "Error: Conda environment 'ibex' must be active."; \
+
+
+check-conda-%:
+	@if [ "$$CONDA_DEFAULT_ENV" != "$*" ]; then \
+		echo "Error: Conda environment '$*' must be active."; \
 		echo "Run: source ./eth.sh"; \
 		exit 1; \
 	fi
@@ -194,6 +195,7 @@ print_config:
 	@echo $(BANNER)
 	@echo onnx-mlir=$(ONNX_INSTALL_DIR)/bin/onnx-mlir
 	@echo TEST_CASE_DIR=$(TEST_CASE_DIR)
+	@echo 💡 ONNX_MODEL=$(ONNX_MODEL)
 # 	@echo $(BANNER)
 	@echo CC=$(CC)
 	@echo CXX=$(CXX)

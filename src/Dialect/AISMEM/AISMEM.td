@@ -283,6 +283,47 @@ def AISMEMRedMulEUploadOp: AISMEM_Op<"RedMulEUpload"> {
   );
 }
 
+// Host -> private SPM transfer of a 2-D window, with the FP16 bit-level
+// transforms the transformer schedules need applied on the way in:
+//
+//   S       = source viewed row-major as [numElements / ld, ld],
+//             ld = the innermost static dimension of `source`
+//   Win     = S[row_offset : row_offset + rows, col_offset : col_offset + cols]
+//   Win'    = transpose ? Win^T : Win
+//   dst[i][j] = f(Win'[i][j])  if (i, j) is inside Win', else +0.0
+//             for 0 <= i < dst_rows, 0 <= j < dst_cols
+//   f(x)    = relu ? (sign(x) ? +0.0 : x) : x, then negate ? -x : x
+//
+// All transforms act on raw binary16 bits (sign mask / sign flip / moves), so
+// no scalar floating point is needed on the core.  dst_cols is one RedMulE row
+// (16).  next_address follows the same spm_write convention as RedMulEUpload.
+// Typical uses: zero-padded K^T and V for attention, the column tiles of W1
+// and row tiles of W2 for the feed-forward block, and the ReLU between two
+// GEMMs.
+def AISMEMRedMulEUploadTileOp: AISMEM_Op<"RedMulEUploadTile"> {
+  let summary = "Upload a transformed 2-D window of a host matrix into private RedMulE SPM";
+  let arguments = (ins
+    Arg<AnyMemRef, "source", [MemRead]>:$source,
+    I32:$spm_address,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$tile,
+    I32Attr:$row_offset,
+    I32Attr:$col_offset,
+    I32Attr:$rows,
+    I32Attr:$cols,
+    I32Attr:$dst_rows,
+    DefaultValuedAttr<I32Attr, "16">:$dst_cols,
+    DefaultValuedAttr<BoolAttr, "false">:$transpose,
+    DefaultValuedAttr<BoolAttr, "false">:$relu,
+    DefaultValuedAttr<BoolAttr, "false">:$negate
+  );
+  let results = (outs
+    I32:$next_address,
+    NoneType:$none_val
+  );
+  let hasVerifier = 1;
+}
+
 // Initialize the persistent Y region in private SPM to zero.  This operation
 // is emitted only before phase 1.  Phase 2 intentionally omits it so that the
 // second GEMM accumulates into the phase-1 Y value.

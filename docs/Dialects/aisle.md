@@ -26,6 +26,46 @@ Effects: `MemoryEffects::Effect{}`
 | :----: | ----------- |
 | `C` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values
 
+### `aisle.ComplexGEMM` (spade::AISLEComplexGEMMOp)
+
+_AISLE split-complex GEMM operator_
+
+Computes a split-complex matrix multiplication:
+
+  Cr = Ar * Br - Ai * Bi
+  Ci = Ar * Bi + Ai * Br
+
+Ar/Ai are the real/imaginary components of A and Br/Bi are the
+real/imaginary components of B. The operation deliberately preserves
+complex-GEMM semantics in AISLE; tiling, RedMulE assignment, SPM
+residency, and FP16 data movement are lower-level decisions.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `Ar` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Ar_shape` | tensor of 32-bit signless integer values
+| `Ai` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Ai_shape` | tensor of 32-bit signless integer values
+| `Br` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Br_shape` | tensor of 32-bit signless integer values
+| `Bi` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Bi_shape` | tensor of 32-bit signless integer values
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `Cr` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Ci` | tensor of 16-bit float values or tensor of 32-bit float values
+
 ### `aisle.Conv` (spade::AISLEConvOp)
 
 _AISLE Conv operation_
@@ -149,6 +189,93 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `Y` | tensor of 16-bit float values or tensor of 32-bit float values or tensor of 64-bit float values
+
+### `aisle.MultiHeadAttention` (spade::AISLEMultiHeadAttentionOp)
+
+_AISLE multi-head attention_
+
+Y = Concat_i(norm(Xq Wq_i (Xkv Wk_i)^T * scale) Xkv Wv_i) Wo + C
+
+norm is softmax over the key axis ("softmax") or ReLU(.) * post_scale
+("relu").  `scale` is always explicit at this level (ONNXToAISLE resolves
+the 1/sqrt(d_k) default and folds constant scales into Wq/Wv).
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>num_heads</code></td><td>::mlir::IntegerAttr</td><td>64-bit signed integer attribute</td></tr>
+<tr><td><code>scale</code></td><td>::mlir::FloatAttr</td><td>32-bit float attribute</td></tr>
+<tr><td><code>post_scale</code></td><td>::mlir::FloatAttr</td><td>32-bit float attribute</td></tr>
+<tr><td><code>normalization</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `Xq` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Xq_shape` | tensor of 32-bit signless integer values
+| `Xkv` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Xkv_shape` | tensor of 32-bit signless integer values
+| `Wq` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wq_shape` | tensor of 32-bit signless integer values
+| `Wk` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wk_shape` | tensor of 32-bit signless integer values
+| `Wv` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wv_shape` | tensor of 32-bit signless integer values
+| `Wo` | tensor of 16-bit float values or tensor of 32-bit float values
+| `Wo_shape` | tensor of 32-bit signless integer values
+| `C` | tensor of 16-bit float values or tensor of 32-bit float values
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `Y` | tensor of 16-bit float values or tensor of 32-bit float values
+
+### `aisle.PositionwiseFeedForward` (spade::AISLEPositionwiseFeedForwardOp)
+
+_AISLE position-wise feed-forward network_
+
+Y = activation(X W1) W2 + C, activation = "relu".
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>activation</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `X` | tensor of 16-bit float values or tensor of 32-bit float values
+| `X_shape` | tensor of 32-bit signless integer values
+| `W1` | tensor of 16-bit float values or tensor of 32-bit float values
+| `W1_shape` | tensor of 32-bit signless integer values
+| `W2` | tensor of 16-bit float values or tensor of 32-bit float values
+| `W2_shape` | tensor of 32-bit signless integer values
+| `C` | tensor of 16-bit float values or tensor of 32-bit float values
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `Y` | tensor of 16-bit float values or tensor of 32-bit float values
 
 ### `aisle.qconstant` (spade::AISLEQConstantOp)
 

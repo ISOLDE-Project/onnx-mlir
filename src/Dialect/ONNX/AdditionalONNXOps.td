@@ -81,6 +81,118 @@ def ONNXRedMulEComplexGemmOp :
 }
 
 //===----------------------------------------------------------------------===//
+// ISOLDE transformer building blocks (com.isolde domain).
+//
+// Names follow "Attention Is All You Need" (Vaswani et al. 2017,
+// arXiv:1706.03762).  In an ONNX file these operators are normally shipped
+// together with a model-local FunctionProto (see tformer_onnx.py in
+// ibex/isolde/sw/radar_attention) that gives their reference semantics in
+// standard ai.onnx ops.  The importer builds the ops below instead of inlining
+// that body; --functions-to-decompose=<op_type> restores the inlining.
+//
+// Both ops take an optional trailing accumulator C (Gemm-style).  It is never
+// present in an imported model: the ONNX->AISLE pass folds a following
+// residual Add into it, so the residual costs nothing on RedMulE (Y preload).
+//===----------------------------------------------------------------------===//
+
+def ONNXMultiHeadAttentionOp : ONNX_Op<"MultiHeadAttention",
+    [Pure, DeclareOpInterfaceMethods<ShapeInferenceOpInterface>]> {
+  let summary = "ISOLDE multi-head attention (Vaswani et al. 2017, sec. 3.2)";
+  let description = [{
+    Computes
+
+      MultiHead(Xq, Xkv) = Concat(head_1, ..., head_h) Wo  (+ C)
+      head_i = Attention(Xq Wq_i, Xkv Wk_i, Xkv Wv_i)
+      Attention(Q, K, V) = norm(Q K^T * scale) V
+
+    with h = `num_heads`; the heads are laid out contiguously along the output
+    columns of Wq, Wk and Wv.  Self-attention uses Xq == Xkv.
+
+    `normalization` selects the score normalization:
+      * "softmax": softmax over the key axis (the paper, eq. 1);
+      * "relu":    ReLU(.) * post_scale  (ReLU attention, Wortsman et al.
+                   2023; used by the ISOLDE radar_attention encoder).
+    `post_scale` must be 1.0 for "softmax".  When `scale` is absent it
+    defaults to 1/sqrt(d_k), d_k = Wq.shape[1] / num_heads.
+
+    Xq: [B, Lq, Dq] or [Lq, Dq]; Xkv: [B, Lkv, Dkv] or [Lkv, Dkv];
+    Wq: [Dq, Dk*h]; Wk: [Dkv, Dk*h]; Wv: [Dkv, Dv*h]; Wo: [Dv*h, Do];
+    C (optional): same shape as Y; Y: [B, Lq, Do] or [Lq, Do].
+
+    This operation is an ISOLDE extension (domain com.isolde) and is not part
+    of standard ONNX.
+  }];
+  let arguments = (ins
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Xq,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Xkv,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wq,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wk,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wv,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wo,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, NoneType]>:$C,
+    DefaultValuedAttr<SI64Attr, "1">:$num_heads,
+    OptionalAttr<F32Attr>:$scale,
+    DefaultValuedAttr<F32Attr, "1.0">:$post_scale,
+    DefaultValuedStrAttr<StrAttr, "softmax">:$normalization
+  );
+  let results = (outs AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Y);
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    static int getNumberOfOperands() {
+      return 7;
+    }
+    static int getNumberOfResults() {
+      return 1;
+    }
+    static std::vector<int> getTypeMap() {
+      return {30};
+    }
+    // `scale` if present, else 1/sqrt(d_k).  Requires a static Wq.shape[1].
+    float getScaleOrDefault();
+  }];
+}
+
+def ONNXPositionwiseFeedForwardOp : ONNX_Op<"PositionwiseFeedForward",
+    [Pure, DeclareOpInterfaceMethods<ShapeInferenceOpInterface>]> {
+  let summary = "ISOLDE position-wise feed-forward network (Vaswani et al. 2017, eq. 2)";
+  let description = [{
+    Computes
+
+      FFN(X) = activation(X W1) W2  (+ C)
+
+    applied to every position independently.  The biases b1, b2 of the paper
+    are not represented (the ISOLDE encoder has none); `activation` is "relu",
+    the only value accepted today.
+
+    X: [B, L, D] or [L, D]; W1: [D, Dff]; W2: [Dff, Do];
+    C (optional): same shape as Y; Y: [B, L, Do] or [L, Do].
+
+    This operation is an ISOLDE extension (domain com.isolde) and is not part
+    of standard ONNX.
+  }];
+  let arguments = (ins
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$X,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$W1,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$W2,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, NoneType]>:$C,
+    DefaultValuedStrAttr<StrAttr, "relu">:$activation
+  );
+  let results = (outs AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Y);
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    static int getNumberOfOperands() {
+      return 4;
+    }
+    static int getNumberOfResults() {
+      return 1;
+    }
+    static std::vector<int> getTypeMap() {
+      return {30};
+    }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // ONNX Ops to assist lowering of ONNX.
 //===----------------------------------------------------------------------===//
 /*

@@ -1,0 +1,70 @@
+// RUN: onnx-mlir --EmitONNXBasic --printIR %s | FileCheck %s
+// RUN: onnx-mlir --functions-to-decompose=MultiHeadAttention --functions-to-decompose=PositionwiseFeedForward --EmitONNXBasic --printIR %s | FileCheck %s --check-prefix=DECOMPOSE
+
+// An encoder layer described with the com.isolde transformer vocabulary.
+// EncoderLayer has no importer handler and is inlined; MultiHeadAttention and
+// PositionwiseFeedForward become ONNX-dialect ops unless decomposed.
+<
+ir_version: 9,
+opset_import: [ "" : 18, "com.isolde" : 1 ]
+>
+agraph (float16[1,12,16] h, float16[16,16] wq, float16[16,16] wk, float16[16,16] wv, float16[16,16] wo, float16[16,48] w1, float16[48,16] w2) => (float16[1,12,16] y)
+{
+    y = com.isolde.EncoderLayer <scale = 0.25, post_scale = 0.5> (h, wq, wk, wv, wo, w1, w2)
+}
+
+<
+opset_import: [ "" : 18, "com.isolde" : 1 ],
+domain: "com.isolde"
+>
+EncoderLayer <scale, num_heads: int = 1, post_scale: float = 1.0, normalization: string = "relu"> (H, Wq, Wk, Wv, Wo, W1, W2) => (Y) {
+    attn = com.isolde.MultiHeadAttention <num_heads: int = @num_heads, scale: float = @scale, post_scale: float = @post_scale, normalization: string = @normalization> (H, H, Wq, Wk, Wv, Wo)
+    H1 = Add (H, attn)
+    ffn = com.isolde.PositionwiseFeedForward (H1, W1, W2)
+    Y = Add (H1, ffn)
+}
+
+<
+opset_import: [ "" : 18 ],
+domain: "com.isolde"
+>
+MultiHeadAttention <scale, num_heads: int = 1, post_scale: float = 1.0, normalization: string = "relu"> (Xq, Xkv, Wq, Wk, Wv, Wo) => (Y) {
+    q = MatMul (Xq, Wq)
+    k = MatMul (Xkv, Wk)
+    v = MatMul (Xkv, Wv)
+    kt = Transpose <perm = [0, 2, 1]> (k)
+    qkt = MatMul (q, kt)
+    s32 = Constant <value_float: float = @scale> ()
+    s = CastLike (s32, qkt)
+    sc = Mul (qkt, s)
+    r = Relu (sc)
+    p32 = Constant <value_float: float = @post_scale> ()
+    p = CastLike (p32, r)
+    a = Mul (r, p)
+    o = MatMul (a, v)
+    Y = MatMul (o, Wo)
+}
+
+<
+opset_import: [ "" : 18 ],
+domain: "com.isolde"
+>
+PositionwiseFeedForward (X, W1, W2) => (Y) {
+    u = MatMul (X, W1)
+    r = Relu (u)
+    Y = MatMul (r, W2)
+}
+
+// CHECK-LABEL:  func.func @main_graph
+// CHECK-NOT:       onnx.Relu
+// CHECK:           [[ATTN:%.+]] = "onnx.MultiHeadAttention"({{.*}}) {normalization = "relu", num_heads = 1 : si64, post_scale = 5.000000e-01 : f32, scale = 2.500000e-01 : f32}
+// CHECK:           [[H1:%.+]] = "onnx.Add"({{.*}}, [[ATTN]])
+// CHECK:           [[FFN:%.+]] = "onnx.PositionwiseFeedForward"([[H1]], {{.*}})
+// CHECK:           "onnx.Add"([[H1]], [[FFN]])
+// CHECK-NOT:       onnx.Custom
+
+// DECOMPOSE-LABEL: func.func @main_graph
+// DECOMPOSE-NOT:   onnx.MultiHeadAttention
+// DECOMPOSE-NOT:   onnx.PositionwiseFeedForward
+// DECOMPOSE:       onnx.Relu
+// DECOMPOSE:       onnx.Relu

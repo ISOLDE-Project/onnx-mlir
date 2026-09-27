@@ -1,0 +1,105 @@
+// RUN: onnx-mlir --EmitSPADEMLIR --printIR %s | FileCheck %s
+
+// End to end: com.isolde encoder layer (scales already folded, weights as
+// graph inputs) -> onnx -> aisle -> aismem RedMulE schedule.
+<
+ir_version: 9,
+opset_import: [ "" : 18, "com.isolde" : 1 ]
+>
+agraph (float16[1,12,16] h, float16[16,16] wq, float16[16,16] wk, float16[16,16] wv, float16[16,16] wo, float16[16,48] w1, float16[48,16] w2) => (float16[1,12,16] y)
+{
+    y = com.isolde.EncoderLayer <scale = 1.0, post_scale = 1.0> (h, wq, wk, wv, wo, w1, w2)
+}
+
+<
+opset_import: [ "" : 18, "com.isolde" : 1 ],
+domain: "com.isolde"
+>
+EncoderLayer <scale, num_heads: int = 1, post_scale: float = 1.0, normalization: string = "relu"> (H, Wq, Wk, Wv, Wo, W1, W2) => (Y) {
+    attn = com.isolde.MultiHeadAttention <num_heads: int = @num_heads, scale: float = @scale, post_scale: float = @post_scale, normalization: string = @normalization> (H, H, Wq, Wk, Wv, Wo)
+    H1 = Add (H, attn)
+    ffn = com.isolde.PositionwiseFeedForward (H1, W1, W2)
+    Y = Add (H1, ffn)
+}
+
+<
+opset_import: [ "" : 18 ],
+domain: "com.isolde"
+>
+MultiHeadAttention <scale, num_heads: int = 1, post_scale: float = 1.0, normalization: string = "relu"> (Xq, Xkv, Wq, Wk, Wv, Wo) => (Y) {
+    q = MatMul (Xq, Wq)
+    k = MatMul (Xkv, Wk)
+    v = MatMul (Xkv, Wv)
+    kt = Transpose <perm = [0, 2, 1]> (k)
+    qkt = MatMul (q, kt)
+    s32 = Constant <value_float: float = @scale> ()
+    s = CastLike (s32, qkt)
+    sc = Mul (qkt, s)
+    r = Relu (sc)
+    p32 = Constant <value_float: float = @post_scale> ()
+    p = CastLike (p32, r)
+    a = Mul (r, p)
+    o = MatMul (a, v)
+    Y = MatMul (o, Wo)
+}
+
+<
+opset_import: [ "" : 18 ],
+domain: "com.isolde"
+>
+PositionwiseFeedForward (X, W1, W2) => (Y) {
+    u = MatMul (X, W1)
+    r = Relu (u)
+    Y = MatMul (r, W2)
+}
+
+// CHECK-LABEL: func.func @main_graph
+// CHECK-SAME:    ([[H:%.+]]: memref<1x12x16xf16>
+// CHECK-SAME:     [[WQ:%[a-z0-9]+]]: memref<16x16xf16>
+// CHECK-SAME:     [[WK:%[a-z0-9]+]]: memref<16x16xf16>
+// CHECK-SAME:     [[WV:%[a-z0-9]+]]: memref<16x16xf16>
+// CHECK-SAME:     [[WO:%[a-z0-9]+]]: memref<16x16xf16>
+// CHECK-SAME:     [[W1:%[a-z0-9]+]]: memref<16x48xf16>
+// CHECK-SAME:     [[W2:%[a-z0-9]+]]: memref<48x16xf16>
+
+// MultiHeadAttention, phase 1: Q, K, V on tiles 0, 1, 2, one barrier.
+// CHECK:     [[B0:%.+]] = "aismem.RedMulEAddrStart"() <{bank = 0 : i32, tile = 0 : i32}>
+// CHECK:     [[X0:%.+]], {{%.+}} = "aismem.RedMulEUploadTile"([[H]], [[B0]])
+// CHECK:     [[Y0:%.+]], {{%.+}} = "aismem.RedMulEUploadTile"([[WQ]], [[X0]],
+// CHECK:     "aismem.RedMulEUploadTile"([[WK]],
+// CHECK-SAME:  tile = 1 : i32
+// CHECK:     "aismem.RedMulEUploadTile"([[WV]],
+// CHECK-SAME:  tile = 2 : i32
+// CHECK:     "aismem.RedMulEWait"({{.*}}) <{mask = 7 : i32}>
+// CHECK-COUNT-3: "aismem.RedMulEDownload"
+// Phase 2: S = Q . pad16(K^T)
+// CHECK:     "aismem.RedMulEUploadTile"{{.*}}dst_rows = 16 : i32{{.*}}rows = 12 : i32{{.*}}transpose = true
+// CHECK:     "aismem.RedMulEGEMM"
+// Phase 3: O = ReLU(S) . pad16(V)
+// CHECK:     "aismem.RedMulEUploadTile"{{.*}}relu = true
+// CHECK:     "aismem.RedMulEUploadTile"{{.*}}dst_rows = 16 : i32{{.*}} rows = 12 : i32
+// CHECK:     "aismem.RedMulEGEMM"
+// Phase 4: Y = O . Wo + h, the residual preloaded into Y (no zeroing).
+// CHECK:     "aismem.RedMulEUploadTile"([[WO]], [[X0]],
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[H]], [[Y0]],
+// CHECK-NEXT: "aismem.RedMulEGEMM"
+// CHECK:     "aismem.RedMulEDownload"
+
+// PositionwiseFeedForward: three W1 column tiles on three RedMulEs ...
+// CHECK:     "aismem.RedMulEUploadTile"([[W1]],
+// CHECK-SAME:  col_offset = 0 : i32
+// CHECK:     "aismem.RedMulEUploadTile"([[W1]],
+// CHECK-SAME:  col_offset = 16 : i32
+// CHECK:     "aismem.RedMulEUploadTile"([[W1]],
+// CHECK-SAME:  col_offset = 32 : i32
+// CHECK:     "aismem.RedMulEWait"({{.*}}) <{mask = 7 : i32}>
+// ... then a K-reduction over the W2 row tiles on tile 0, Y accumulating.
+// CHECK:     "aismem.RedMulEUploadTile"([[W2]],
+// CHECK-SAME:  row_offset = 0 : i32
+// CHECK:     "aismem.RedMulEUploadTile"([[W2]],
+// CHECK-SAME:  row_offset = 16 : i32
+// CHECK:     "aismem.RedMulEUploadTile"([[W2]],
+// CHECK-SAME:  row_offset = 32 : i32
+// CHECK:     "aismem.RedMulEDownload"
+// CHECK-NOT: "aismem.RedMulE
+// CHECK:     return

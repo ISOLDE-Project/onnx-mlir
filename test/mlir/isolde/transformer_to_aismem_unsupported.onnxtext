@@ -1,0 +1,57 @@
+// RUN: not onnx-mlir --EmitSPADEMLIR %s 2>&1 | FileCheck %s
+
+// Softmax attention has no RedMulE schedule: the AISLE -> AISMEM lowering
+// must say so (and how to get around it) instead of emitting partial code.
+<
+ir_version: 9,
+opset_import: [ "" : 18, "com.isolde" : 1 ]
+>
+agraph (float16[1,12,16] h, float16[16,16] wq, float16[16,16] wk, float16[16,16] wv, float16[16,16] wo, float16[16,48] w1, float16[48,16] w2) => (float16[1,12,16] y)
+{
+    y = com.isolde.EncoderLayer <scale = 1.0, post_scale = 1.0, normalization = "softmax"> (h, wq, wk, wv, wo, w1, w2)
+}
+
+<
+opset_import: [ "" : 18, "com.isolde" : 1 ],
+domain: "com.isolde"
+>
+EncoderLayer <scale, num_heads: int = 1, post_scale: float = 1.0, normalization: string = "relu"> (H, Wq, Wk, Wv, Wo, W1, W2) => (Y) {
+    attn = com.isolde.MultiHeadAttention <num_heads: int = @num_heads, scale: float = @scale, post_scale: float = @post_scale, normalization: string = @normalization> (H, H, Wq, Wk, Wv, Wo)
+    H1 = Add (H, attn)
+    ffn = com.isolde.PositionwiseFeedForward (H1, W1, W2)
+    Y = Add (H1, ffn)
+}
+
+<
+opset_import: [ "" : 18 ],
+domain: "com.isolde"
+>
+MultiHeadAttention <scale, num_heads: int = 1, post_scale: float = 1.0, normalization: string = "relu"> (Xq, Xkv, Wq, Wk, Wv, Wo) => (Y) {
+    q = MatMul (Xq, Wq)
+    k = MatMul (Xkv, Wk)
+    v = MatMul (Xkv, Wv)
+    kt = Transpose <perm = [0, 2, 1]> (k)
+    qkt = MatMul (q, kt)
+    s32 = Constant <value_float: float = @scale> ()
+    s = CastLike (s32, qkt)
+    sc = Mul (qkt, s)
+    r = Relu (sc)
+    p32 = Constant <value_float: float = @post_scale> ()
+    p = CastLike (p32, r)
+    a = Mul (r, p)
+    o = MatMul (a, v)
+    Y = MatMul (o, Wo)
+}
+
+<
+opset_import: [ "" : 18 ],
+domain: "com.isolde"
+>
+PositionwiseFeedForward (X, W1, W2) => (Y) {
+    u = MatMul (X, W1)
+    r = Relu (u)
+    Y = MatMul (r, W2)
+}
+
+// CHECK: error: RedMulE MultiHeadAttention supports normalization="relu" only; decompose softmax attention at import time (--functions-to-decompose=MultiHeadAttention)
+// CHECK: error: failed to legalize operation 'aisle.MultiHeadAttention' that was explicitly marked illegal

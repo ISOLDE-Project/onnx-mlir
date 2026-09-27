@@ -38,6 +38,8 @@ void populateAISLEToAISMEMConversionPattern(RewritePatternSet &patterns,
 
   populateLoweringAISLEComplexGEMMOpPattern(patterns, typeConverter, ctx);
 
+  populateLoweringAISLETransformerOpPatterns(patterns, typeConverter, ctx);
+
   populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx);
 
   populateLoweringAISLEhstackOpPattern(patterns, typeConverter, ctx);
@@ -53,10 +55,15 @@ struct AISLEToAISMEMLoweringPass
 
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AISLEToAISMEMLoweringPass)
 
-  StringRef getArgument() const { return "convert-aisle-to-aismem"; }
+  StringRef getArgument() const override { return "convert-aisle-to-aismem"; }
 
-  StringRef getDescription() const {
+  StringRef getDescription() const override {
     return "Lower (some)AISLE ops to AISMEM dialect.";
+  }
+
+  // Needed when the input IR does not already mention AISMEM (onnx-mlir-opt).
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<spade::AISMEMDialect, memref::MemRefDialect>();
   }
 
   // Make sure that we have a valid default constructor and copy
@@ -92,6 +99,11 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
   // the explicit four-launch schedule. applyPartialConversion is otherwise
   // allowed to leave unclassified AISLE operations in the IR.
   target.addIllegalOp<spade::AISLEComplexGEMMOp>();
+
+  // Same for the transformer blocks: an unsupported configuration must be
+  // reported here rather than silently reaching the LLVM lowering.
+  target.addIllegalOp<spade::AISLEMultiHeadAttentionOp,
+      spade::AISLEPositionwiseFeedForwardOp>();
 
   RewritePatternSet patterns(&getContext());
 

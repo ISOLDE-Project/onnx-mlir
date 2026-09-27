@@ -24,6 +24,7 @@ namespace {
 
 constexpr StringLiteral addrStartFunc = "omrm_addr_start";
 constexpr StringLiteral uploadFunc = "omrm_upload_f16";
+constexpr StringLiteral uploadTileFunc = "omrm_upload_tile_f16";
 constexpr StringLiteral zeroFunc = "omrm_zero_f16";
 constexpr StringLiteral gemm16x12x16Func = "omrm_gemm_f16_16_12_16";
 constexpr StringLiteral waitFunc = "omrm_wait";
@@ -130,6 +131,58 @@ public:
             i32Constant(rewriter, loc, negateAttr.getValue() ? 1 : 0)});
     rewriter.replaceOp(op, ValueRange{call.getResult(),
                                completedToken(rewriter, loc)});
+    return success();
+  }
+};
+
+// omrm_upload_tile_f16 flags; keep in sync with onnx_redmule_runtime.h.
+constexpr int64_t tileFlagTranspose = 1;
+constexpr int64_t tileFlagRelu = 2;
+constexpr int64_t tileFlagNegate = 4;
+
+class RedMulEUploadTileLowering final : public ConvertToLLVMPattern {
+public:
+  RedMulEUploadTileLowering(LLVMTypeConverter &converter, MLIRContext *context)
+      : ConvertToLLVMPattern(
+            spade::AISMEMRedMulEUploadTileOp::getOperationName(), context,
+            converter) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    auto tileOp = cast<spade::AISMEMRedMulEUploadTileOp>(op);
+    if (operands.size() < 2)
+      return rewriter.notifyMatchFailure(op, "expected source and address");
+    auto sourceType = dyn_cast<MemRefType>(tileOp.getSource().getType());
+    if (!sourceType || !sourceType.hasStaticShape() ||
+        !sourceType.getElementType().isF16())
+      return rewriter.notifyMatchFailure(op, "requires a static f16 source");
+
+    int64_t flags = 0;
+    if (tileOp.getTranspose())
+      flags |= tileFlagTranspose;
+    if (tileOp.getRelu())
+      flags |= tileFlagRelu;
+    if (tileOp.getNegate())
+      flags |= tileFlagNegate;
+
+    Location loc = op->getLoc();
+    Type i32 = rewriter.getI32Type();
+    Type ptr = LLVM::LLVMPointerType::get(rewriter.getContext());
+    auto function = getOrInsertFunction(op, rewriter, uploadTileFunc, i32,
+        {i32, i32, ptr, i32, i32, i32, i32, i32, i32, i32, i32});
+    auto call = rewriter.create<LLVM::CallOp>(loc, function,
+        ValueRange{i32Constant(rewriter, loc, tileOp.getTile()), operands[1],
+            operands[0],
+            i32Constant(rewriter, loc, sourceType.getShape().back()),
+            i32Constant(rewriter, loc, tileOp.getRowOffset()),
+            i32Constant(rewriter, loc, tileOp.getColOffset()),
+            i32Constant(rewriter, loc, tileOp.getRows()),
+            i32Constant(rewriter, loc, tileOp.getCols()),
+            i32Constant(rewriter, loc, tileOp.getDstRows()),
+            i32Constant(rewriter, loc, tileOp.getDstCols()),
+            i32Constant(rewriter, loc, flags)});
+    rewriter.replaceOp(
+        op, ValueRange{call.getResult(), completedToken(rewriter, loc)});
     return success();
   }
 };
@@ -274,6 +327,7 @@ namespace spade {
 void populateLoweringAISMEMRedMulEOpPatterns(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx) {
   patterns.insert<RedMulEAddrStartLowering, RedMulEUploadLowering,
+      RedMulEUploadTileLowering,
       RedMulEZeroLowering, RedMulEGEMMLowering, RedMulEWaitLowering,
       RedMulEDownloadLowering>(typeConverter, ctx);
 }

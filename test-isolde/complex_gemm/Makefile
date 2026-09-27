@@ -1,5 +1,6 @@
 TOP_LEVEL_DIR       :=  $(shell git rev-parse --show-toplevel)
-mkfile_path         :=  $(TOP_LEVEL_DIR)/test-isolde/complex_gemm
+TEST_CASE           :=  complex_gemm
+mkfile_path         :=  $(TOP_LEVEL_DIR)/test-isolde/$(TEST_CASE)
 XLEN                ?=  32
 ONNX_MODEL          ?=  $(mkfile_path)/models/redmule_complex_gemm_12x16x16.onnx
 # APP=resnet18
@@ -32,6 +33,6 @@ $(DST_DIR):
 
 .PHONY:  clean-model	
 clean-model:
-	rm -rf $(DST_DIR) 
+	rm -f $(DST_DIR)/*.onnx
 
 

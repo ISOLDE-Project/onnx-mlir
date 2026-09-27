@@ -23,5 +23,9 @@ void populateLoweringAISLEGEMMOpPattern(RewritePatternSet &patterns,
 void populateLoweringAISLEhstackOpPattern(RewritePatternSet &patterns,
         TypeConverter &typeConverter, MLIRContext *ctx);
                         
+// ISOLDE transformer blocks -> explicit RedMulE/SPM schedules.
+void populateLoweringAISLETransformerOpPatterns(RewritePatternSet &patterns,
+        TypeConverter &typeConverter, MLIRContext *ctx);
+
 //insert new pattern above this line
 } // namespace spade

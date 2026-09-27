@@ -292,7 +292,7 @@ def AISLEAddOp:AISLE_Op<"Add",
   
     let extraClassDeclaration = [{
       static int getNumberOfOperands() {
-        return 2;
+        return 4;
       }
       static int getNumberOfResults() {
         return 1;
@@ -319,7 +319,7 @@ def AISLEReduceMeanOp:AISLE_Op<"ReduceMean",
   
     let extraClassDeclaration = [{
       static int getNumberOfOperands() {
-        return 1;
+        return 3;
       }
       static int getNumberOfResults() {
         return 1;
@@ -456,6 +456,90 @@ def AISLEComplexGEMMOp: AISLE_Op<"ComplexGEMM", [Pure]> {
     }
     static std::vector<int> getTypeMap() {
       return {20, 20};
+    }
+  }];
+}
+
+
+//===----------------------------------------------------------------------===//
+// ISOLDE transformer building blocks (Vaswani et al. 2017)
+//
+// Mathematical-level counterparts of onnx.MultiHeadAttention and
+// onnx.PositionwiseFeedForward.  As for ComplexGEMM, tiling, RedMulE tile
+// assignment, zero padding, SPM residency and FP16 data movement are decided
+// by the AISLE -> AISMEM lowering, not here.
+//
+// The optional C operand is an accumulator: Y = block(X) + C.  ONNXToAISLE
+// folds a residual Add into it, which AISLEToAISMEM turns into a Y preload.
+//===----------------------------------------------------------------------===//
+
+def AISLEMultiHeadAttentionOp: AISLE_Op<"MultiHeadAttention", [Pure]> {
+  let summary = "AISLE multi-head attention";
+  let description = [{
+    Y = Concat_i(norm(Xq Wq_i (Xkv Wk_i)^T * scale) Xkv Wv_i) Wo + C
+
+    norm is softmax over the key axis ("softmax") or ReLU(.) * post_scale
+    ("relu").  `scale` is always explicit at this level (ONNXToAISLE resolves
+    the 1/sqrt(d_k) default and folds constant scales into Wq/Wv).
+  }];
+  let arguments = (ins
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Xq,
+    TensorOf<[I32]>:$Xq_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Xkv,
+    TensorOf<[I32]>:$Xkv_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wq,
+    TensorOf<[I32]>:$Wq_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wk,
+    TensorOf<[I32]>:$Wk_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wv,
+    TensorOf<[I32]>:$Wv_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Wo,
+    TensorOf<[I32]>:$Wo_shape,
+    Optional<AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>>:$C,
+    DefaultValuedAttr<SI64Attr, "1">:$num_heads,
+    F32Attr:$scale,
+    DefaultValuedAttr<F32Attr, "1.0">:$post_scale,
+    DefaultValuedStrAttr<StrAttr, "softmax">:$normalization
+  );
+  let results = (outs AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Y);
+  let extraClassDeclaration = [{
+    static int getNumberOfOperands() {
+      return 13;
+    }
+    static int getNumberOfResults() {
+      return 1;
+    }
+    static std::vector<int> getTypeMap() {
+      return {20};
+    }
+  }];
+}
+
+def AISLEPositionwiseFeedForwardOp: AISLE_Op<"PositionwiseFeedForward", [Pure]> {
+  let summary = "AISLE position-wise feed-forward network";
+  let description = [{
+    Y = activation(X W1) W2 + C, activation = "relu".
+  }];
+  let arguments = (ins
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$X,
+    TensorOf<[I32]>:$X_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$W1,
+    TensorOf<[I32]>:$W1_shape,
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$W2,
+    TensorOf<[I32]>:$W2_shape,
+    Optional<AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>>:$C,
+    DefaultValuedStrAttr<StrAttr, "relu">:$activation
+  );
+  let results = (outs AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>]>:$Y);
+  let extraClassDeclaration = [{
+    static int getNumberOfOperands() {
+      return 7;
+    }
+    static int getNumberOfResults() {
+      return 1;
+    }
+    static std::vector<int> getTypeMap() {
+      return {20};
     }
   }];
 }
