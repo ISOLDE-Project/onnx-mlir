@@ -132,6 +132,10 @@ std::unique_ptr<mlir::Pass> createLowerToAISLEPass();
 
 std::unique_ptr<mlir::Pass> createLowerToAISMEMPass();
 
+/// Assign SPM rows to aismem.SPMAlloc buffers; hoist resident weights into
+/// <function>_preload.
+std::unique_ptr<mlir::Pass> createSPMAllocationPass();
+
 std::unique_ptr<mlir::Pass> createLowerToLLVMIRPass();
 
 namespace krnl {

@@ -1,7 +1,10 @@
 // RUN: onnx-mlir --EmitSPADEMLIR --printIR %s | FileCheck %s
 
 // End to end: com.isolde encoder layer (scales already folded, weights as
-// graph inputs) -> onnx -> aisle -> aismem RedMulE schedule.
+// graph inputs, so they are streamed per call rather than resident) ->
+// onnx -> aisle -> aismem RedMulE schedule with SPM-resident activations on
+// one tile.  The layer input is uploaded once, the output downloaded once;
+// everything in between stays in SPM.
 <
 ir_version: 9,
 opset_import: [ "" : 18, "com.isolde" : 1 ]
@@ -55,51 +58,41 @@ PositionwiseFeedForward (X, W1, W2) => (Y) {
 
 // CHECK-LABEL: func.func @main_graph
 // CHECK-SAME:    ([[H:%.+]]: memref<1x12x16xf16>
-// CHECK-SAME:     [[WQ:%[a-z0-9]+]]: memref<16x16xf16>
-// CHECK-SAME:     [[WK:%[a-z0-9]+]]: memref<16x16xf16>
-// CHECK-SAME:     [[WV:%[a-z0-9]+]]: memref<16x16xf16>
-// CHECK-SAME:     [[WO:%[a-z0-9]+]]: memref<16x16xf16>
-// CHECK-SAME:     [[W1:%[a-z0-9]+]]: memref<16x48xf16>
-// CHECK-SAME:     [[W2:%[a-z0-9]+]]: memref<48x16xf16>
+// CHECK-SAME:    aismem.spm_rows_used = {tile0 =
 
-// MultiHeadAttention, phase 1: Q, K, V on tiles 0, 1, 2, one barrier.
-// CHECK:     [[B0:%.+]] = "aismem.RedMulEAddrStart"() <{bank = 0 : i32, tile = 0 : i32}>
-// CHECK:     [[X0:%.+]], {{%.+}} = "aismem.RedMulEUploadTile"([[H]], [[B0]])
-// CHECK:     [[Y0:%.+]], {{%.+}} = "aismem.RedMulEUploadTile"([[WQ]], [[X0]],
-// CHECK:     "aismem.RedMulEUploadTile"([[WK]],
-// CHECK-SAME:  tile = 1 : i32
-// CHECK:     "aismem.RedMulEUploadTile"([[WV]],
-// CHECK-SAME:  tile = 2 : i32
-// CHECK:     "aismem.RedMulEWait"({{.*}}) <{mask = 7 : i32}>
-// CHECK-COUNT-3: "aismem.RedMulEDownload"
-// Phase 2: S = Q . pad16(K^T)
-// CHECK:     "aismem.RedMulEUploadTile"{{.*}}dst_rows = 16 : i32{{.*}}rows = 12 : i32{{.*}}transpose = true
-// CHECK:     "aismem.RedMulEGEMM"
-// Phase 3: O = ReLU(S) . pad16(V)
-// CHECK:     "aismem.RedMulEUploadTile"{{.*}}relu = true
-// CHECK:     "aismem.RedMulEUploadTile"{{.*}}dst_rows = 16 : i32{{.*}} rows = 12 : i32
-// CHECK:     "aismem.RedMulEGEMM"
-// Phase 4: Y = O . Wo + h, the residual preloaded into Y (no zeroing).
-// CHECK:     "aismem.RedMulEUploadTile"([[WO]], [[X0]],
-// CHECK-NEXT: "aismem.RedMulEUploadTile"([[H]], [[Y0]],
-// CHECK-NEXT: "aismem.RedMulEGEMM"
-// CHECK:     "aismem.RedMulEDownload"
+// MultiHeadAttention: h is uploaded once and is also the residual accumulator.
+// CHECK:     [[X:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Xq", resident = false, row = [[XR:[0-9]+]]
+// CHECK:     "aismem.RedMulEUploadTile"([[H]], [[X]]
+// CHECK:     [[Q:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Q"
+// CHECK:     "aismem.RedMulEGEMM"([[X]], {{%.+}}, [[Q]],
+// CHECK-NEXT: "aismem.RedMulEWait"({{.*}}) <{mask = 1 : i32}>
+// CHECK:     [[K:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}K", {{.*}}rows = 12
+// V goes straight into a zero-filled 16-row buffer: it is already pad16(V).
+// CHECK:     [[V:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}V|0", {{.*}}rows = 16
+// CHECK-NEXT: "aismem.RedMulEZero"([[V]], {{.*}}) <{elements = 256 : i32
+// CHECK:     [[KT:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}K^T|0", {{.*}}rows = 16
+// CHECK-NEXT: "aismem.SPMTranspose"([[K]], [[KT]], {{.*}}) <{dst_rows = 16 : i32, rows = 12 : i32
+// CHECK:     [[S:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}S"
+// CHECK:     "aismem.RedMulEGEMM"([[Q]], [[KT]], [[S]],
+// CHECK:     "aismem.SPMRelu"([[S]],
+// CHECK:     [[O:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}O"
+// CHECK:     "aismem.RedMulEGEMM"([[S]], [[V]], [[O]],
+// Residual in place: Y = O . Wo + h accumulates into h's own rows.
+// CHECK:     "aismem.RedMulEGEMM"([[O]], {{%.+}}, [[X]],
 
-// PositionwiseFeedForward: three W1 column tiles on three RedMulEs ...
-// CHECK:     "aismem.RedMulEUploadTile"([[W1]],
-// CHECK-SAME:  col_offset = 0 : i32
-// CHECK:     "aismem.RedMulEUploadTile"([[W1]],
-// CHECK-SAME:  col_offset = 16 : i32
-// CHECK:     "aismem.RedMulEUploadTile"([[W1]],
-// CHECK-SAME:  col_offset = 32 : i32
-// CHECK:     "aismem.RedMulEWait"({{.*}}) <{mask = 7 : i32}>
-// ... then a K-reduction over the W2 row tiles on tile 0, Y accumulating.
-// CHECK:     "aismem.RedMulEUploadTile"([[W2]],
-// CHECK-SAME:  row_offset = 0 : i32
-// CHECK:     "aismem.RedMulEUploadTile"([[W2]],
-// CHECK-SAME:  row_offset = 16 : i32
-// CHECK:     "aismem.RedMulEUploadTile"([[W2]],
-// CHECK-SAME:  row_offset = 32 : i32
-// CHECK:     "aismem.RedMulEDownload"
+// PositionwiseFeedForward reads the attention result where it is and
+// accumulates into it again.
+// CHECK:     [[U0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}U0"
+// CHECK:     "aismem.RedMulEGEMM"([[X]], {{%.+}}, [[U0]],
+// CHECK:     "aismem.SPMRelu"([[U0]],
+// CHECK:     "aismem.SPMRelu"
+// CHECK:     "aismem.SPMRelu"
+// CHECK:     "aismem.RedMulEGEMM"([[U0]], {{%.+}}, [[X]],
+// CHECK:     "aismem.RedMulEGEMM"({{%.+}}, {{%.+}}, [[X]],
+// CHECK:     "aismem.RedMulEGEMM"({{%.+}}, {{%.+}}, [[X]],
+// CHECK:     "aismem.RedMulEWait"
+// The only transfer back to data memory:
+// CHECK:     "aismem.RedMulEDownload"([[X]],
 // CHECK-NOT: "aismem.RedMulE
 // CHECK:     return
+// CHECK-NOT: func.func @main_graph_preload

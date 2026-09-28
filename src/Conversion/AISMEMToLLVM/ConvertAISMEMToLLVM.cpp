@@ -119,6 +119,8 @@ void AISMEMToLLVMLoweringPass::runOnOperation() {
   target.addLegalOp<UnrealizedConversionCastOp>();
   target.addIllegalOp<spade::AISMEMRedMulEAddrStartOp,
       spade::AISMEMRedMulEUploadOp, spade::AISMEMRedMulEUploadTileOp,
+      spade::AISMEMSPMAllocOp, spade::AISMEMSPMReluOp,
+      spade::AISMEMSPMTransposeOp, spade::AISMEMSPMCopyOp,
       spade::AISMEMRedMulEZeroOp,
       spade::AISMEMRedMulEGEMMOp, spade::AISMEMRedMulEWaitOp,
       spade::AISMEMRedMulEDownloadOp>();

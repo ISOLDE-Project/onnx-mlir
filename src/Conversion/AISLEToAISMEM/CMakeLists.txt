@@ -10,6 +10,8 @@ add_onnx_mlir_library(OMAISLEToAISMEM
   DMA/hstack.cpp
   Math/ComplexGEMM.cpp
   Math/GEMM.cpp
+  Math/MatMulAdd.cpp
+  SPMAllocation.cpp
   Math/Transformer.cpp
   
   LINK_LIBS PUBLIC

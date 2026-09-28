@@ -84,3 +84,18 @@ mlir::LogicalResult spade::AISMEMRedMulEUploadTileOp::verify() {
            << dstRows << "x" << dstCols << " destination";
   return mlir::success();
 }
+
+//===----------------------------------------------------------------------===//
+// SPMAlloc
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult spade::AISMEMSPMAllocOp::verify() {
+  if (static_cast<int32_t>(getTile()) < 0)
+    return emitOpError("tile must be >= 0");
+  if (static_cast<int32_t>(getRows()) <= 0)
+    return emitOpError("rows must be > 0");
+  if (std::optional<uint32_t> row = getRow())
+    if (static_cast<int32_t>(*row) < 0)
+      return emitOpError("row must be >= 0");
+  return mlir::success();
+}

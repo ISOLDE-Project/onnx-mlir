@@ -228,6 +228,9 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
     }
     pm.addPass(spade::createLowerToAISMEMPass());
     pm.addPass(mlir::createCanonicalizerPass());
+    // SPM row management: place SPM-resident buffers, hoist resident weight
+    // uploads into <entry>_preload.
+    pm.addPass(spade::createSPMAllocationPass());
   }
 
   if (inputIRLevel <= onnx_mlir::LLVMLevel &&

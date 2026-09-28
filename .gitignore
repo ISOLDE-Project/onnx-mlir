@@ -203,3 +203,5 @@ log*
 MemManager.yaml
 *.old
 *copy/
+*.npz
+*.patch

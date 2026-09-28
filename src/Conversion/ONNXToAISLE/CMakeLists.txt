@@ -6,6 +6,7 @@ add_onnx_mlir_library(OMONNXToAISLE
   ConvertONNXToAISLE.cpp
   Math/ComplexGEMM.cpp
   Math/GEMM.cpp
+  Math/MatMulAdd.cpp
   Math/Transformer.cpp
   
 

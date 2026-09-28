@@ -267,7 +267,7 @@ def AISMEMRedMulEAddrStartOp: AISMEM_Op<"RedMulEAddrStart"> {
 // negate=true performs raw FP16 sign-bit negation while copying.  This belongs
 // on the upload operation (not GEMM), because the reference implementation
 // forms -Bi while writing Bi into SPM.
-def AISMEMRedMulEUploadOp: AISMEM_Op<"RedMulEUpload"> {
+def AISMEMRedMulEUploadOp: AISMEM_Op<"RedMulEUpload", [MemoryEffects<[MemWrite]>]> {
   let summary = "Upload a host matrix into private RedMulE SPM";
   let arguments = (ins
     Arg<AnyMemRef, "source", [MemRead]>:$source,
@@ -300,7 +300,11 @@ def AISMEMRedMulEUploadOp: AISMEM_Op<"RedMulEUpload"> {
 // Typical uses: zero-padded K^T and V for attention, the column tiles of W1
 // and row tiles of W2 for the feed-forward block, and the ReLU between two
 // GEMMs.
-def AISMEMRedMulEUploadTileOp: AISMEM_Op<"RedMulEUploadTile"> {
+// The SPM is not modelled as a memref, so the write into it is declared on
+// the default resource: an upload whose results are unused (a resident
+// weight) must not be erased as dead.
+def AISMEMRedMulEUploadTileOp: AISMEM_Op<"RedMulEUploadTile",
+    [MemoryEffects<[MemWrite]>]> {
   let summary = "Upload a transformed 2-D window of a host matrix into private RedMulE SPM";
   let arguments = (ins
     Arg<AnyMemRef, "source", [MemRead]>:$source,
@@ -322,6 +326,87 @@ def AISMEMRedMulEUploadTileOp: AISMEM_Op<"RedMulEUploadTile"> {
     NoneType:$none_val
   );
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// SPM-resident buffers
+//
+// Tensors that are produced and consumed by RedMulE live in the tile-private
+// scratchpad instead of travelling SPM -> DMEM -> SPM.  A buffer is a range of
+// SPM rows (64-byte address stride, 16 binary16 payload values per row).
+//
+//   aismem.SPMAlloc      symbolic buffer; the `aismem-spm-allocate` pass
+//                        assigns `row` from buffer lifetimes
+//   aismem.SPMRelu       in-place ReLU (sign-bit mask)
+//   aismem.SPMTranspose  zero-padded transpose, SPM -> SPM, same tile
+//   aismem.SPMCopy       row copy, SPM -> SPM, same tile
+//
+// The three transforms run on the core through the narrow SPM window today
+// (omrm_spm_*_f16); they are separate ops so a loader-based implementation can
+// replace them without touching the schedules.
+//===----------------------------------------------------------------------===//
+
+def AISMEMSPMAllocOp: AISMEM_Op<"SPMAlloc"> {
+  let summary = "A buffer of `rows` rows in the private SPM of `tile`";
+  let description = [{
+    Returns the SPM address of the buffer's first row.  Until the
+    `aismem-spm-allocate` pass has run, `row` is absent and the buffer is only
+    a name; the pass assigns rows from the buffer lifetimes and capacity of
+    the tile.  `resident` buffers are filled once from constants by the
+    generated `<entry>_preload` function and keep their rows for the whole
+    program (weights).  `name` is informational (SPM map, debugging).
+
+    Deliberately not Pure: two identical allocations are two buffers.
+  }];
+  let arguments = (ins
+    I32Attr:$tile,
+    I32Attr:$rows,
+    OptionalAttr<I32Attr>:$row,
+    DefaultValuedAttr<BoolAttr, "false">:$resident,
+    OptionalAttr<StrAttr>:$name
+  );
+  let results = (outs I32:$address);
+  let hasVerifier = 1;
+}
+
+def AISMEMSPMReluOp: AISMEM_Op<"SPMRelu"> {
+  let summary = "In-place ReLU on `rows` SPM rows (raw binary16 sign test)";
+  let arguments = (ins
+    I32:$spm_address,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$tile,
+    I32Attr:$rows
+  );
+  let results = (outs NoneType:$none_val);
+}
+
+def AISMEMSPMTransposeOp: AISMEM_Op<"SPMTranspose"> {
+  let summary = "dst[i][j] = j < rows ? src[j][i] : +0.0, i < dst_rows";
+  let description = [{
+    Transposes a `rows` x 16 SPM matrix into a zero-padded `dst_rows` x 16 one
+    on the same tile (e.g. K[12x16] -> pad16(K^T)[16x16] for Q K^T).
+  }];
+  let arguments = (ins
+    I32:$source,
+    I32:$destination,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$tile,
+    I32Attr:$rows,
+    DefaultValuedAttr<I32Attr, "16">:$dst_rows
+  );
+  let results = (outs NoneType:$none_val);
+}
+
+def AISMEMSPMCopyOp: AISMEM_Op<"SPMCopy"> {
+  let summary = "Copy `rows` SPM rows on one tile";
+  let arguments = (ins
+    I32:$source,
+    I32:$destination,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$tile,
+    I32Attr:$rows
+  );
+  let results = (outs NoneType:$none_val);
 }
 
 // Initialize the persistent Y region in private SPM to zero.  This operation

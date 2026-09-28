@@ -4,6 +4,7 @@
 The graphs use the vocabulary of "Attention Is All You Need" (Vaswani et al.
 2017, arXiv:1706.03762) in the custom domain ``com.isolde``:
 
+    input projection        = MatMul [12,32] x [32,16] -> Add positional encoding
     EncoderLayer            = MultiHeadAttention -> Add -> PositionwiseFeedForward -> Add
     MultiHeadAttention      (sec. 3.2.2)
     ScaledDotProductAttention (sec. 3.2.1, eq. 1)
@@ -153,6 +154,9 @@ def encoder_layer_function(opset):
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
+F = 32                 # input features: two 16-wide K-tiles
+
+
 def make_weights(seed, d_ff):
     rng = np.random.default_rng(seed)
 
@@ -161,7 +165,8 @@ def make_weights(seed, d_ff):
             np.float16)
 
     return dict(wq=w(D, D), wk=w(D, D), wv=w(D, D), wo=w(D, D),
-                w1=w(D, d_ff), w2=w(d_ff, D),
+                w1=w(D, d_ff), w2=w(d_ff, D), proj=w(F, D),
+                pos=(0.1 * rng.standard_normal((L, D))).astype(np.float16),
                 scale=1.0 / np.sqrt(D),
                 post_scale=float(np.exp(rng.uniform(1.5, 3.0)) / L))
 
@@ -169,10 +174,25 @@ def make_weights(seed, d_ff):
 def build_model(block, p, onnx_opset):
     attrs = dict(num_heads=1, normalization="relu",
                  scale=float(p["scale"]), post_scale=float(p["post_scale"]))
-    names = dict(wq="Wq", wk="Wk", wv="Wv", wo="Wo", w1="W1", w2="W2")
+    names = dict(wq="Wq", wk="Wk", wv="Wv", wo="Wo", w1="W1", w2="W2",
+                 proj="Wproj", pos="P")
     inits = {k: numpy_helper.from_array(p[k], names[k]) for k in names}
+    in_shape = [1, L, D]
 
-    if block == "layer":
+    if block in ("proj", "proj_layer"):
+        in_shape = [1, L, F]
+        nodes = [helper.make_node("MatMul", ["h", "Wproj"], ["embedded"],
+                                  name="input_embedding"),
+                 helper.make_node("Add", ["embedded", "P"],
+                                  ["y" if block == "proj" else "h0"],
+                                  name="positional_encoding")]
+        used = ["Wproj", "P"]
+        if block == "proj_layer":
+            nodes.append(helper.make_node(
+                "EncoderLayer", ["h0", "Wq", "Wk", "Wv", "Wo", "W1", "W2"],
+                ["y"], domain=DOMAIN, name="encoder.layer0", **attrs))
+            used += ["Wq", "Wk", "Wv", "Wo", "W1", "W2"]
+    elif block == "layer":
         nodes = [helper.make_node(
             "EncoderLayer", ["h", "Wq", "Wk", "Wv", "Wo", "W1", "W2"], ["y"],
             domain=DOMAIN, name="encoder.layer0", **attrs)]
@@ -197,7 +217,7 @@ def build_model(block, p, onnx_opset):
 
     graph = helper.make_graph(
         nodes, f"transformer_{block}",
-        [helper.make_tensor_value_info("h", TensorProto.FLOAT16, [1, L, D])],
+        [helper.make_tensor_value_info("h", TensorProto.FLOAT16, in_shape)],
         [helper.make_tensor_value_info("y", TensorProto.FLOAT16, [1, L, D])],
         initializer=[inits[k] for k in names if names[k] in used])
     model = helper.make_model(
@@ -242,7 +262,22 @@ def fold(w, factor):
     return (w.astype(np.float64) * factor).astype(np.float16)
 
 
+def identity12():
+    i = np.zeros((L, D), np.float16)
+    i[np.arange(L), np.arange(L)] = 1
+    return i
+
+
 def redmule_reference(block, p, h):
+    if block in ("proj", "proj_layer"):
+        # MatMul: Y = 0, two K-tiles; Add: Y = I . pad16(P) + Y
+        x = h.reshape(L, F).astype(np.float16)
+        y = gemm16(x[:, :16], p["proj"][:16], np.zeros((L, D), np.float16))
+        y = gemm16(x[:, 16:], p["proj"][16:], y)
+        y = gemm16(identity12(), pad(p["pos"]), y)
+        if block == "proj":
+            return y.reshape(1, L, D)
+        return redmule_reference("layer", p, y.reshape(1, L, D))
     h = h.reshape(L, D).astype(np.float16)
     wq, wv = fold(p["wq"], p["scale"]), fold(p["wv"], p["post_scale"])
 
@@ -266,6 +301,11 @@ def redmule_reference(block, p, h):
 
 def float_reference(block, p, h):
     f = {k: v.astype(np.float64) for k, v in p.items() if isinstance(v, np.ndarray)}
+    if block in ("proj", "proj_layer"):
+        y = h.reshape(L, F).astype(np.float64) @ f["proj"] + f["pos"]
+        if block == "proj":
+            return y.reshape(1, L, D)
+        return float_reference("layer", p, y.reshape(1, L, D))
     x = h.reshape(L, D).astype(np.float64)
 
     def mha(x):
@@ -282,7 +322,9 @@ def float_reference(block, p, h):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--block", choices=["layer", "mha", "ffn"], default="layer")
+    ap.add_argument("--block",
+                    choices=["layer", "mha", "ffn", "proj", "proj_layer"],
+                    default="layer")
     ap.add_argument("--d-ff", type=int, default=48)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--onnx-opset", type=int, default=18)
@@ -294,7 +336,8 @@ def main():
     a.out.parent.mkdir(parents=True, exist_ok=True)
     onnx.save(model, a.out)
 
-    h = (np.random.default_rng(a.seed + 1).standard_normal((1, L, D))
+    width = F if a.block in ("proj", "proj_layer") else D
+    h = (np.random.default_rng(a.seed + 1).standard_normal((1, L, width))
          .astype(np.float16))
     np.savez(a.out.with_suffix(".npz"), h=h,
              y_redmule=redmule_reference(a.block, p, h),

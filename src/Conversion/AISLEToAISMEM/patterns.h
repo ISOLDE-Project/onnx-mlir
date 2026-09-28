@@ -27,5 +27,9 @@ void populateLoweringAISLEhstackOpPattern(RewritePatternSet &patterns,
 void populateLoweringAISLETransformerOpPatterns(RewritePatternSet &patterns,
         TypeConverter &typeConverter, MLIRContext *ctx);
 
+// aisle.MatMul / aisle.Add -> RedMulE launches on SPM buffers.
+void populateLoweringAISLEMatMulAddOpPatterns(RewritePatternSet &patterns,
+        TypeConverter &typeConverter, MLIRContext *ctx);
+
 //insert new pattern above this line
 } // namespace spade

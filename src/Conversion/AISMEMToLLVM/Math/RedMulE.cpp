@@ -25,6 +25,10 @@ namespace {
 constexpr StringLiteral addrStartFunc = "omrm_addr_start";
 constexpr StringLiteral uploadFunc = "omrm_upload_f16";
 constexpr StringLiteral uploadTileFunc = "omrm_upload_tile_f16";
+constexpr StringLiteral spmReluFunc = "omrm_spm_relu_f16";
+constexpr StringLiteral spmTransposeFunc = "omrm_spm_transpose_f16";
+constexpr StringLiteral spmCopyFunc = "omrm_spm_copy_f16";
+constexpr int64_t spmRowBytes = 64; // get_addr_start(row) = row << 6
 constexpr StringLiteral zeroFunc = "omrm_zero_f16";
 constexpr StringLiteral gemm16x12x16Func = "omrm_gemm_f16_16_12_16";
 constexpr StringLiteral waitFunc = "omrm_wait";
@@ -187,6 +191,97 @@ public:
   }
 };
 
+// A placed SPM buffer is just its first row's address.
+class SPMAllocLowering final : public ConvertToLLVMPattern {
+public:
+  SPMAllocLowering(LLVMTypeConverter &converter, MLIRContext *context)
+      : ConvertToLLVMPattern(spade::AISMEMSPMAllocOp::getOperationName(),
+            context, converter) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    (void)operands;
+    auto alloc = cast<spade::AISMEMSPMAllocOp>(op);
+    std::optional<uint32_t> row = alloc.getRow();
+    if (!row)
+      return op->emitError("SPM buffer has no row assigned; run the "
+                           "aismem-spm-allocate pass before LLVM lowering");
+    rewriter.replaceOp(
+        op, i32Constant(rewriter, op->getLoc(), *row * spmRowBytes));
+    return success();
+  }
+};
+
+// omrm_spm_relu_f16(tile, addr, rows)
+class SPMReluLowering final : public ConvertToLLVMPattern {
+public:
+  SPMReluLowering(LLVMTypeConverter &converter, MLIRContext *context)
+      : ConvertToLLVMPattern(spade::AISMEMSPMReluOp::getOperationName(),
+            context, converter) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    auto relu = cast<spade::AISMEMSPMReluOp>(op);
+    Location loc = op->getLoc();
+    Type i32 = rewriter.getI32Type();
+    Type voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
+    auto function = getOrInsertFunction(
+        op, rewriter, spmReluFunc, voidType, {i32, i32, i32});
+    rewriter.create<LLVM::CallOp>(loc, function,
+        ValueRange{i32Constant(rewriter, loc, relu.getTile()), operands[0],
+            i32Constant(rewriter, loc, relu.getRows())});
+    rewriter.replaceOp(op, completedToken(rewriter, loc));
+    return success();
+  }
+};
+
+// omrm_spm_transpose_f16(tile, src, dst, rows, dst_rows)
+class SPMTransposeLowering final : public ConvertToLLVMPattern {
+public:
+  SPMTransposeLowering(LLVMTypeConverter &converter, MLIRContext *context)
+      : ConvertToLLVMPattern(spade::AISMEMSPMTransposeOp::getOperationName(),
+            context, converter) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    auto tr = cast<spade::AISMEMSPMTransposeOp>(op);
+    Location loc = op->getLoc();
+    Type i32 = rewriter.getI32Type();
+    Type voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
+    auto function = getOrInsertFunction(
+        op, rewriter, spmTransposeFunc, voidType, {i32, i32, i32, i32, i32});
+    rewriter.create<LLVM::CallOp>(loc, function,
+        ValueRange{i32Constant(rewriter, loc, tr.getTile()), operands[0],
+            operands[1], i32Constant(rewriter, loc, tr.getRows()),
+            i32Constant(rewriter, loc, tr.getDstRows())});
+    rewriter.replaceOp(op, completedToken(rewriter, loc));
+    return success();
+  }
+};
+
+// omrm_spm_copy_f16(tile, src, dst, rows)
+class SPMCopyLowering final : public ConvertToLLVMPattern {
+public:
+  SPMCopyLowering(LLVMTypeConverter &converter, MLIRContext *context)
+      : ConvertToLLVMPattern(spade::AISMEMSPMCopyOp::getOperationName(),
+            context, converter) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    auto copy = cast<spade::AISMEMSPMCopyOp>(op);
+    Location loc = op->getLoc();
+    Type i32 = rewriter.getI32Type();
+    Type voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
+    auto function = getOrInsertFunction(
+        op, rewriter, spmCopyFunc, voidType, {i32, i32, i32, i32});
+    rewriter.create<LLVM::CallOp>(loc, function,
+        ValueRange{i32Constant(rewriter, loc, copy.getTile()), operands[0],
+            operands[1], i32Constant(rewriter, loc, copy.getRows())});
+    rewriter.replaceOp(op, completedToken(rewriter, loc));
+    return success();
+  }
+};
+
 class RedMulEZeroLowering final : public ConvertToLLVMPattern {
 public:
   RedMulEZeroLowering(LLVMTypeConverter &converter, MLIRContext *context)
@@ -327,7 +422,8 @@ namespace spade {
 void populateLoweringAISMEMRedMulEOpPatterns(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx) {
   patterns.insert<RedMulEAddrStartLowering, RedMulEUploadLowering,
-      RedMulEUploadTileLowering,
+      RedMulEUploadTileLowering, SPMAllocLowering, SPMReluLowering,
+      SPMTransposeLowering, SPMCopyLowering,
       RedMulEZeroLowering, RedMulEGEMMLowering, RedMulEWaitLowering,
       RedMulEDownloadLowering>(typeConverter, ctx);
 }

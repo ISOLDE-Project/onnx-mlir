@@ -340,6 +340,10 @@ _Launch GEMM from already-populated RedMulE private SPM_
 _Upload a host matrix into private RedMulE SPM_
 
 
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::mlir::SideEffects::DefaultResource}`
+
 #### Attributes:
 
 <table>
@@ -368,6 +372,10 @@ _Upload a host matrix into private RedMulE SPM_
 
 _Upload a transformed 2-D window of a host matrix into private RedMulE SPM_
 
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::mlir::SideEffects::DefaultResource}`
 
 #### Attributes:
 
@@ -526,6 +534,119 @@ Effects: `MemoryEffects::Effect{}`
 | `X_shape` | memref of any type values
 | `Y_shape` | memref of any type values
 | `Y` | memref of any type values
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
+
+### `aismem.SPMAlloc` (::spade::AISMEMSPMAllocOp)
+
+_A buffer of `rows` rows in the private SPM of `tile`_
+
+Returns the SPM address of the buffer's first row.  Until the
+`aismem-spm-allocate` pass has run, `row` is absent and the buffer is only
+a name; the pass assigns rows from the buffer lifetimes and capacity of
+the tile.  `resident` buffers are filled once from constants by the
+generated `<entry>_preload` function and keep their rows for the whole
+program (weights).  `name` is informational (SPM map, debugging).
+
+Deliberately not Pure: two identical allocations are two buffers.
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>rows</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>row</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>resident</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
+<tr><td><code>name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `address` | 32-bit signless integer
+
+### `aismem.SPMCopy` (::spade::AISMEMSPMCopyOp)
+
+_Copy `rows` SPM rows on one tile_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>rows</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | 32-bit signless integer
+| `destination` | 32-bit signless integer
+| `dependencies` | variadic of none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
+
+### `aismem.SPMRelu` (::spade::AISMEMSPMReluOp)
+
+_In-place ReLU on `rows` SPM rows (raw binary16 sign test)_
+
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>rows</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `spm_address` | 32-bit signless integer
+| `dependencies` | variadic of none type
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `none_val` | none type
+
+### `aismem.SPMTranspose` (::spade::AISMEMSPMTransposeOp)
+
+_Dst[i][j] = j < rows ? src[j][i] : +0.0, i < dst_rows_
+
+Transposes a `rows` x 16 SPM matrix into a zero-padded `dst_rows` x 16 one
+on the same tile (e.g. K[12x16] -> pad16(K^T)[16x16] for Q K^T).
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>tile</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>rows</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+<tr><td><code>dst_rows</code></td><td>::mlir::IntegerAttr</td><td>32-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | 32-bit signless integer
+| `destination` | 32-bit signless integer
+| `dependencies` | variadic of none type
 
 #### Results:
 

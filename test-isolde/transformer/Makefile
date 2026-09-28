@@ -1,7 +1,7 @@
 TOP_LEVEL_DIR       :=  $(shell git rev-parse --show-toplevel)
 mkfile_path         :=  $(TOP_LEVEL_DIR)/test-isolde/transformer
 XLEN                ?=  32
-# layer | mha | ffn
+# layer | mha | ffn | proj | proj_layer
 BLOCK               ?=  layer
 D_FF                ?=  48
 DST_DIR             :=  $(mkfile_path)/models

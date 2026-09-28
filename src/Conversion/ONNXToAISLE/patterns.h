@@ -29,6 +29,11 @@ void populateLoweringONNXToAISLETransformerOpPatterns(
 // scales into Wq/Wv and residual Adds into the blocks' accumulator C.
 void fuseTransformerBlocks(ModuleOp module);
 
+// f16 MatMul [12, 16K] x [16K, 16] and Add [12, 16] + [12, 16] on RedMulE.
+void populateLoweringONNXToAISLEMatMulAddOpPatterns(
+    RewritePatternSet &patterns, TypeConverter &typeConverter,
+    MLIRContext *ctx);
+
 //insert new pattern above this line
 } //namespace spade
 

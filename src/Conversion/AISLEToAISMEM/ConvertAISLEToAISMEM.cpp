@@ -5,6 +5,7 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "patterns.h"
+#include "src/Conversion/AISLEToAISMEM/Math/SPMValue.hpp"
 #include <optional>
 
 #include "mlir/Pass/Pass.h"
@@ -39,6 +40,8 @@ void populateAISLEToAISMEMConversionPattern(RewritePatternSet &patterns,
   populateLoweringAISLEComplexGEMMOpPattern(patterns, typeConverter, ctx);
 
   populateLoweringAISLETransformerOpPatterns(patterns, typeConverter, ctx);
+
+  populateLoweringAISLEMatMulAddOpPatterns(patterns, typeConverter, ctx);
 
   populateLoweringAISLEGEMMOpPattern(patterns, typeConverter, ctx);
 
@@ -103,7 +106,8 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
   // Same for the transformer blocks: an unsupported configuration must be
   // reported here rather than silently reaching the LLVM lowering.
   target.addIllegalOp<spade::AISLEMultiHeadAttentionOp,
-      spade::AISLEPositionwiseFeedForwardOp>();
+      spade::AISLEPositionwiseFeedForwardOp, spade::AISLEMatMulOp,
+      spade::AISLEAddOp>();
 
   RewritePatternSet patterns(&getContext());
 
@@ -143,7 +147,12 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
   // operations were not converted successfully.
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     signalPassFailure();
+    return;
   }
+
+  // RedMulE blocks hand their results to each other in SPM; download only
+  // those that reach anything else (e.g. the function's return).
+  materializeSPMResults(module);
 }
 
 std::unique_ptr<Pass> createLowerToAISMEMPass() {

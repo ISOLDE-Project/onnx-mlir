@@ -29,6 +29,9 @@ void populateONNXToAISLEConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXToAISLETransformerOpPatterns(
       patterns, typeConverter, ctx);
 
+  // MatMul / Add on RedMulE (f16, one-tile shapes; others go to Krnl).
+  populateLoweringONNXToAISLEMatMulAddOpPatterns(patterns, typeConverter, ctx);
+
   // GEMM
   populateLoweringONNXToAISLEGEMMOpPattern(
       patterns, typeConverter, ctx, enableParallel);
