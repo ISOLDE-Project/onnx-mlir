@@ -57,10 +57,52 @@ RISCV_WARNINGS += -Wunused-variable -Wall -Wextra -Wno-unused-command-line-argum
 DEBUG_DIALECT_CONVERSION ?= no
 
 ifeq ($(DEBUG_DIALECT_CONVERSION),yes)
-DIALECT_DEBUG := -debug-only=dialect-conversion
+DIALECT_DEBUG := -debug-only=dialect-conversion,pattern-application
 else
 DIALECT_DEBUG :=
 endif
+
+
+# Optional onnx-mlir diagnostics (all disabled by default).
+# ONNX_DEBUG_ONLY selects the exact, case-sensitive C++ DEBUG_TYPE strings.
+# A comma-separated or quoted space-separated list is accepted. If nonempty,
+# it enables selective logging by itself and takes precedence over ONNX_DEBUG.
+# The existing DEBUG_DIALECT_CONVERSION=yes switch adds dialect-conversion
+# to that list. DIALECT_DEBUG above remains available to other Makefiles.
+# LLVM_DEBUG code must be compiled in: use an assertions-enabled compiler and
+# LLVM build. Defining DEBUG_TYPE alone does not print anything; LLVM_DEBUG
+# statements in that category must execute. RISC-V -g flags are unrelated.
+ONNX_DEBUG              ?= no
+ONNX_DEBUG_ONLY         ?=
+ONNX_IR_DUMP            ?= none
+ONNX_IR_MODULE_SCOPE    ?= no
+# Empty: stderr stays on the terminal. Otherwise each invocation overwrites
+# <directory>/<target>.log; stdout stays on the terminal and failures propagate.
+ONNX_DEBUG_LOG_DIR      ?=
+
+# IR modes: none, before, after, all (before + after), failure.
+# failure is deliberately separate from the other after-printing options.
+ifeq ($(filter $(ONNX_IR_DUMP),none before after all failure),)
+$(error ONNX_IR_DUMP must be one of: none before after all failure)
+endif
+
+onnx_debug_empty :=
+onnx_debug_space := $(onnx_debug_empty) $(onnx_debug_empty)
+onnx_debug_comma := ,
+onnx_debug_types = $(sort $(subst $(onnx_debug_comma), ,$(ONNX_DEBUG_ONLY)) $(if $(filter yes,$(DEBUG_DIALECT_CONVERSION)),dialect-conversion))
+onnx_debug_trace_flags = $(if $(onnx_debug_types),--debug-only=$(subst $(onnx_debug_space),$(onnx_debug_comma),$(onnx_debug_types)),$(if $(filter yes,$(ONNX_DEBUG)),--debug))
+onnx_debug_ir_none :=
+onnx_debug_ir_before := --mlir-print-ir-before-all
+onnx_debug_ir_after := --mlir-print-ir-after-all
+onnx_debug_ir_all := --mlir-print-ir-before-all --mlir-print-ir-after-all
+onnx_debug_ir_failure := --mlir-print-ir-after-failure
+onnx_debug_ir_flags = $(onnx_debug_ir_$(ONNX_IR_DUMP)) $(if $(filter yes,$(ONNX_IR_MODULE_SCOPE)),--mlir-print-ir-module-scope)
+
+# Disable compiler multithreading while tracing, both for readable output and
+# for module-scope IR printing. Keep user-supplied ONNX_MLIR_FLAGS untouched,
+# including when supplied on make's command line.
+ONNX_DEBUG_FLAGS = $(strip $(onnx_debug_trace_flags) $(onnx_debug_ir_flags) \
+    $(if $(strip $(onnx_debug_trace_flags) $(onnx_debug_ir_flags)),--mlir-disable-threading))
 
 
 # LLVM Flags
@@ -93,6 +135,13 @@ ONNX_MLIR_FLAGS			?=
 TOOLS_INSTALL_DIR       ?= ${ROOT_DIR}/install/onnx-mlir/py-codegen
 EXPORT_ELF              ?= ${ROOT_DIR}/HLS/aida/build/bin/export_elf
 
+
+# Shared by all graph stages so diagnostics are applied consistently.
+define onnx_mlir_run
+$(if $(strip $(ONNX_DEBUG_LOG_DIR)),@mkdir -p -- "$(ONNX_DEBUG_LOG_DIR)")
+$(if $(strip $(ONNX_DEBUG_LOG_DIR)),@echo "Compiler stderr: $(ONNX_DEBUG_LOG_DIR)/$@.log")
+$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) $(ONNX_DEBUG_FLAGS) --mtriple=riscv32-unknown-elf $(1) -o graph $< $(if $(strip $(ONNX_DEBUG_LOG_DIR)),2>"$(ONNX_DEBUG_LOG_DIR)/$@.log")
+endef
 
 
 check-conda-%:
@@ -141,27 +190,27 @@ graph: graph.test.onnx graph.test.aisle graph.test.aismem graph.test.aisllvmir g
 
 ## Emit ONNX IR                    Layer  0: ONNX Dialect
 graph.test.onnx:  $(ONNX_MODEL) 	
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitONNXIR -o graph  $<
+	$(call onnx_mlir_run,--EmitONNXIR)
 	@echo "🔔 $(TEST_CASE_DIR)/graph.onnx.onnxir"
 
 ## Emit AISLE / SPADE IR - AISLE - Layer -1: AutomotIve demonStrator mLir dialEct 
 graph.test.aisle:  $(ONNX_MODEL) 	
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEIR -o graph  $<
+	$(call onnx_mlir_run,--EmitSPADEIR)
 	@echo "🔔 $(TEST_CASE_DIR)/graph.spade.aisle"
 
 ## Emit AISMEM / SPADE MLIR        Layer -2: AISMEM AutomotIve DemonStrator MEMref dialect
 graph.test.aismem:  $(ONNX_MODEL) 	
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph $(DIALECT_DEBUG)   $<
+	$(call onnx_mlir_run,--EmitSPADEMLIR)
 	@echo "🔔 $(TEST_CASE_DIR)/graph.spade.mlir"
 
 ## Emit AISLLVM IR                 Layer -3: AISLLVM AutomotIve DemonStrator LLVM dialect
 graph.test.aisllvmir:  $(ONNX_MODEL) 	
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVMIR -o graph  $<
+	$(call onnx_mlir_run,--EmitSPADELLVMIR)
 	@echo "🔔 $(TEST_CASE_DIR)/graph.spade.llvm"
 
 ## Emit llvm and obj
 graph.test.aisllvm:  $(ONNX_MODEL) 	
-	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) --mtriple=riscv32-unknown-elf --EmitSPADELLVM -o graph  $<
+	$(call onnx_mlir_run,--EmitSPADELLVM)
 	@echo "🔔 $(TEST_CASE_DIR)/graph.ll"
 
 
@@ -194,12 +243,41 @@ print_config:
 	@echo ROOT_DIR=$(ROOT_DIR)
 	@echo $(BANNER)
 	@echo onnx-mlir=$(ONNX_INSTALL_DIR)/bin/onnx-mlir
+	@echo "ONNX_MLIR_FLAGS=$(ONNX_MLIR_FLAGS)"
+	@echo "ONNX_DEBUG_FLAGS=$(ONNX_DEBUG_FLAGS)"
+	@echo "ONNX_DEBUG_LOG_DIR=$(ONNX_DEBUG_LOG_DIR)"
 	@echo TEST_CASE_DIR=$(TEST_CASE_DIR)
 	@echo 💡 ONNX_MODEL=$(ONNX_MODEL)
 # 	@echo $(BANNER)
 	@echo CC=$(CC)
 	@echo CXX=$(CXX)
 # 	@echo OBJDUMP=$(OBJDUMP)
+
+.PHONY: help-debug
+## Show optional onnx-mlir debug settings and examples
+help-debug:
+	@printf '%s\n' \
+	  'Optional settings (debugging is off by default):' \
+	  '  ONNX_DEBUG_ONLY=<types>       Exact DEBUG_TYPE names, comma-separated' \
+	  '  ONNX_DEBUG=yes               All LLVM debug categories if no types selected' \
+	  '  DEBUG_DIALECT_CONVERSION=yes Add dialect-conversion to the selected types' \
+	  '  ONNX_IR_DUMP=<mode>          none | before | after | all | failure' \
+	  '  ONNX_IR_MODULE_SCOPE=yes     Print the whole module for requested IR dumps' \
+	  '  ONNX_DEBUG_LOG_DIR=<dir>     Write stderr to <dir>/<target>.log (overwrite)' \
+	  '' \
+	  'Examples (add ONNX_MODEL=projection.onnx if needed):' \
+	  '  make graph.test.aismem ONNX_DEBUG_ONLY=AISLEToAISMEM_MatMulAdd' \
+	  '  make graph.test.aismem ONNX_DEBUG_ONLY=AISLEToAISMEM_MatMulAdd DEBUG_DIALECT_CONVERSION=yes' \
+	  '  make graph.test.aisllvm ONNX_IR_DUMP=after ONNX_IR_MODULE_SCOPE=yes ONNX_DEBUG_LOG_DIR=debug' \
+	  '  make graph.test.aisllvm ONNX_IR_DUMP=failure ONNX_DEBUG_LOG_DIR=debug' \
+	  '' \
+	  'Tracing automatically adds --mlir-disable-threading.' \
+	  'LLVM_DEBUG logging requires an assertions-enabled compiler/LLVM build.' \
+	  'The selected pass and its LLVM_DEBUG statements must actually execute.' \
+	  'ONNX_MLIR_FLAGS may still supply other compiler options.' \
+	  'Avoid conflicting debug/IR flags there when using these settings.' \
+	  'Use make -n <target> ... to inspect the generated command.' \
+	  'Use make -j1 graph when emitting all stages: they share the graph output prefix.'
 
 help: Makefile
 	@printf "Available targets:\n------------------\n"

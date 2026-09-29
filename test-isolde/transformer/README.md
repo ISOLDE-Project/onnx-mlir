@@ -30,6 +30,14 @@ accumulates its two 16-wide K-tiles; Add sets X to the 12x16 identity
 (resident), W to one operand zero padded to 16 rows, and Y to the other
 operand (in place when it may be overwritten).
 
+A rank-2 MatMul followed by an Add is canonicalized by onnx-mlir into
+`onnx.Gemm` (see `test-isolde/projection`).  It becomes one `aisle.GEMM`
+and costs no extra launch: C is uploaded into Y (firmware `launch_bias`),
+then the K-tiles accumulate (`launch_accumulate`).  `transB = 1` uploads the
+W windows transposed.  The tiling is done with upload windows in
+AISLEToAISMEM, never with `onnx.Slice` (no RedMulE lowering, and not legal
+inside ONNXToAISLE).
+
 * `models/generate_transformer.py` writes the model (every `com.isolde` op
   carries a FunctionProto body, so onnxruntime runs it as-is) and an `.npz`
   with the input, the bit-exact FP16 RedMulE reference `y_redmule` and a
