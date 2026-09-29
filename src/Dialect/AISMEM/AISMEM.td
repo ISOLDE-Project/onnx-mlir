@@ -458,12 +458,21 @@ def AISMEMRedMulEWaitOp: AISMEM_Op<"RedMulEWait"> {
 // preventing the readback from moving before accelerator completion.
 def AISMEMRedMulEDownloadOp: AISMEM_Op<"RedMulEDownload"> {
   let summary = "Download a RedMulE private SPM region to host memory";
+  let description = [{
+    Copies `elements` fp16 values (whole 16-element SPM rows) starting at
+    `spm_address`.  SPM row r goes to destination elements
+    [dst_offset + r * dst_ld, dst_offset + r * dst_ld + 16): with the
+    defaults (0, 16) that is a plain contiguous copy; a tile of a wider
+    result uses dst_offset = its first column and dst_ld = the row length.
+  }];
   let arguments = (ins
     I32:$spm_address,
     Arg<AnyMemRef, "destination", [MemWrite]>:$destination,
     NoneType:$dependency,
     I32Attr:$tile,
-    I32Attr:$elements
+    I32Attr:$elements,
+    DefaultValuedAttr<I32Attr, "0">:$dst_offset,
+    DefaultValuedAttr<I32Attr, "16">:$dst_ld
   );
   let results = (outs NoneType:$none_val);
 }

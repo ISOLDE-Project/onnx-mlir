@@ -394,10 +394,18 @@ public:
     if ((*elements % 16) != 0)
       return op->emitError("RedMulE download requires complete 16-f16 rows");
 
+    auto downloadOp = cast<spade::AISMEMRedMulEDownloadOp>(op);
+    const int64_t dstOffset = downloadOp.getDstOffset();
+    const int64_t dstLd = downloadOp.getDstLd();
+    const int64_t rows = *elements / 16;
     auto destinationType = dyn_cast<MemRefType>(op->getOperand(1).getType());
+    const bool contiguous = dstOffset == 0 && dstLd == 16;
     if (!destinationType || !destinationType.getElementType().isF16() ||
         !destinationType.hasStaticShape() ||
-        destinationType.getNumElements() != *elements)
+        (contiguous && destinationType.getNumElements() != *elements) ||
+        (!contiguous && (dstLd < 16 || dstOffset < 0 ||
+                            dstOffset + (rows - 1) * dstLd + 16 >
+                                destinationType.getNumElements())))
       return op->emitError(
           "RedMulE download requires a matching static f16 destination");
 
@@ -407,9 +415,26 @@ public:
     Type voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
     auto function = getOrInsertFunction(
         op, rewriter, downloadFunc, voidType, {i32, i32, ptr, i32});
-    rewriter.create<LLVM::CallOp>(loc, function,
-        ValueRange{i32Constant(rewriter, loc, *tile), operands[0], operands[1],
-            i32Constant(rewriter, loc, *elements)});
+    if (contiguous) {
+      rewriter.create<LLVM::CallOp>(loc, function,
+          ValueRange{i32Constant(rewriter, loc, *tile), operands[0],
+              operands[1], i32Constant(rewriter, loc, *elements)});
+    } else {
+      // A tile of a wider result: one SPM row (16 fp16, 64 bytes of SPM)
+      // per destination row.
+      constexpr int64_t spmRowBytes = 64;
+      for (int64_t r = 0; r < rows; ++r) {
+        Value spm = rewriter.create<LLVM::AddOp>(loc, operands[0],
+            i32Constant(rewriter, loc, r * spmRowBytes));
+        Value dst = rewriter.create<LLVM::GEPOp>(loc, ptr,
+            rewriter.getF16Type(), operands[1],
+            ArrayRef<LLVM::GEPArg>{
+                static_cast<int32_t>(dstOffset + r * dstLd)});
+        rewriter.create<LLVM::CallOp>(loc, function,
+            ValueRange{i32Constant(rewriter, loc, *tile), spm, dst,
+                i32Constant(rewriter, loc, 16)});
+      }
+    }
     rewriter.replaceOp(op, completedToken(rewriter, loc));
     return success();
   }

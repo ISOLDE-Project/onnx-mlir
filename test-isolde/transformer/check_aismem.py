@@ -189,9 +189,14 @@ class Machine:
             dst = self.get(ops[1])
             n = a["elements"]
             self.downloaded += n
-            dst.reshape(-1)[:] = self.rows(a["tile"], self.get(ops[0]),
-                                           n // ROW_ELEMS,
-                                           b[0]).reshape(-1)[:dst.size]
+            rows = self.rows(a["tile"], self.get(ops[0]), n // ROW_ELEMS, b[0])
+            off, ld = a.get("dst_offset", 0), a.get("dst_ld", ROW_ELEMS)
+            flat = dst.reshape(-1)
+            if off == 0 and ld == ROW_ELEMS:
+                flat[:] = rows.reshape(-1)[:dst.size]
+            else:  # one tile of a wider result
+                for r, row in enumerate(rows):
+                    flat[off + r * ld:off + r * ld + ROW_ELEMS] = row
             self.values[res[0]] = None
         elif op == "aismem.SPMRelu":
             t, addr, n = a["tile"], self.get(ops[0]), a["rows"]

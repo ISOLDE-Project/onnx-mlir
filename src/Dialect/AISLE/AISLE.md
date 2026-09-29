@@ -55,25 +55,73 @@ runs unchanged in onnxruntime.
   d_ff = 16k, f16, `normalization = "relu"` (every product is one native
   `Y[12x16] += X[12x16] W[16x16]` launch); anything else is diagnosed.
 
-## MatMul and Add on RedMulE
+## MatMul, Gemm and Add on RedMulE
 
 `convert-onnx-to-aisle` also lowers f16 `onnx.MatMul` `[.., 12, 16K] x [16K,
-16]` (for now the input projection `[12, 32] x [32, 16]`) and f16 `onnx.Add`
-`[.., 12, 16] + [.., 12, 16]` to `aisle.MatMul` / `aisle.Add`; other shapes
-and types stay on the Krnl path.  Both become the native launch
-`Y = X . W + Y`:
+16N]`, f16 `onnx.Gemm` `[12, 16K] x [16K, 16N] (+ [12, 16N])` (alpha = beta
+= 1, transA = 0, any transB; onnx-mlir fuses a rank-2 MatMul + Add into it)
+and f16 `onnx.Add` `[.., 12, 16] + [.., 12, 16]` to `aisle.MatMul` /
+`aisle.GEMM` / `aisle.Add`; other shapes and types stay on their previous
+paths.  Products are kept whole at this point.
 
-* MatMul: `Y = 0`, then one launch per 16-wide K-tile
-  (`X = A[:, 16k:16k+16]`, `W = B[16k:16k+16, :]`, resident), Y accumulates;
+### Tiling: `aisle-tile`, `aisle.Window`, `aisle.Concat`
+
+The `aisle-tile` pass (right after `convert-onnx-to-aisle`) splits every such
+product that is larger than one RedMulE launch into native launches
+`Y[12x16] (+)= X[12x16] . W[16x16]` on views of its operands:
+
+```
+for n < N:                              independent output tiles
+  acc = Window(C, [0, 16n])  | none     (Gemm | MatMul)
+  for k < K:                            chained, accumulating
+    acc = GEMM(Window(A, [0, 16k]), Window(B, [16k, 16n]), acc)
+          (MatMul for the first launch without C: Y = 0)
+Y = Concat(acc_0 .. acc_N-1, axis = last)
+```
+
+* `aisle.Window` is a static rectangular view (offsets; the result type gives
+  the sizes).  It never copies: in AISLE -> AISMEM a Window of data memory
+  becomes a `memref.subview` that the upload reading it folds into its
+  `row_offset` / `col_offset`, and a Window of a tiled SPM result selects a
+  tile.  A Window of a Window folds into one; a Window that selects a whole
+  piece of a Concat folds to that piece, so a product that consumes a tiled
+  product reads its tiles straight from SPM.
+* `aisle.Concat` assembles the N-tiles.  In AISMEM the tiles stay in their
+  SPM buffers; only a non-RedMulE user makes them go back to data memory, one
+  strided `aismem.RedMulEDownload` (`dst_offset`, `dst_ld`) per tile.
+* Tiles are named `<onnx node>[n<n>,k<k>]`, which also names their SPM
+  buffers.  All tiles run on RedMulE instance 0 for now; M is not tiled.
+* Constant operands are split at compile time instead of windowed: an
+  `onnx.Constant` read only by products being tiled becomes one constant per
+  tile (a transB tile already transposed, so it carries transB = 0), and the
+  original constant disappears.  Each W / C tile is then a contiguous 16x16 /
+  12x16 global, uploaded with the runtime's plain-copy path (no offsets, no
+  transpose); identical tiles are merged by CSE, their uploads by
+  `aismem-spm-allocate`.
+
+Each tile then becomes one launch `Y = X . W + Y`:
+
+* MatMul: `Y = 0`;
+* GEMM: `Y = C`: a C from data memory is uploaded into Y (firmware
+  `launch_bias`); the previous K-tile's result is accumulated in place
+  (`launch_accumulate`).  transB uploads the W window transposed;
 * Add: `X = I` (12x16 identity, resident, one per function), `W = pad16(A)`
   (resident when constant), `Y = B`, in place when B may be overwritten, so
   `Y = I . W + Y = A + B` in one launch.
 
-For the radar encoder this puts the input projection and the positional
-encoding on RedMulE (3 launches).  Note: the firmware instead preloads the
-positional encoding into the projection's Y (2 launches), which rounds
-differently; the compiled projection differs from `tf_golden_proj` by at most
-1.2e-3 and the logits keep the same class.
+Every upload of a constant is prepared at compile time: AISLE -> AISMEM
+stores the exact SPM image the upload would produce (window, transpose, zero
+padding to 16 rows, e.g. the Add's `pad16(P)`) as its own `[rows x 16]`
+`krnl.global` (`<constant>_spm_r<row>c<col>_<rows>x<cols>_<dst rows>[t]`) and
+uploads that as a plain copy.  A constant read only through such uploads is
+then dropped, so the only extra data is the padding rows.
+
+Constant W windows are resident (uploaded once by `<entry>_preload`), and
+`aismem-spm-allocate` merges repeated uploads of the same data-memory window
+(e.g. the X tile shared by all N-tiles).  For the radar encoder the rank-2
+input projection + positional encoding is 2 launches and bit-exact with the
+firmware's `tf_golden_proj`; the rank-3 form (MatMul + Add) is 3 launches and
+differs from it by at most 1.2e-3.
 
 ## SPM-resident activations and SPM row management
 

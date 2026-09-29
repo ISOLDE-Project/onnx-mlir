@@ -1,0 +1,82 @@
+// RUN: onnx-mlir --EmitSPADEMLIR --printIR %s | FileCheck %s
+
+// Rank-2 input projection + positional encoding.  onnx-mlir canonicalizes
+// MatMul + Add into onnx.Gemm(x, W, P); aisle-tile splits it into two
+// chained launches: [n0,k0] with Y = P (firmware launch_bias) and [n0,k1]
+// accumulating into the same Y (launch_accumulate) -- no Add launch.
+// `ht` is the same product written as an explicit Gemm with transB = 1: its
+// constant B is split and transposed at compile time, and it reuses the X
+// uploads of `h`.  `hn` is 48 wide: three independent N-tiles, downloaded
+// side by side.  Every constant operand is split into one global per tile.
+<
+ir_version: 9,
+opset_import: [ "" : 18 ]
+>
+agraph (float16[12,32] window) => (float16[12,16] h, float16[12,16] ht, float16[12,48] hn)
+{
+    zero = Constant <value = float {0.0}> ()
+    one = Constant <value = float {1.0}> ()
+    n512 = Constant <value = float {512.0}> ()
+    n1536 = Constant <value = float {1536.0}> ()
+    n576 = Constant <value = float {576.0}> ()
+    scale = Constant <value = float {0.001953125}> ()
+    ws = Constant <value = int64[2] {32, 16}> ()
+    wr = Range (zero, n512, one)
+    wr2 = Reshape (wr, ws)
+    w32 = Mul (wr2, scale)
+    w = Cast <to = 10> (w32)
+    wt = Transpose <perm = [1, 0]> (w)
+    ps = Constant <value = int64[2] {12, 16}> ()
+    p32 = ConstantOfShape <value = float[1] {0.25}> (ps)
+    p = Cast <to = 10> (p32)
+    embedded = MatMul (window, w)
+    h = Add (embedded, p)
+    ht = Gemm <transB = 1> (window, wt, p)
+    w3s = Constant <value = int64[2] {32, 48}> ()
+    w3r = Range (zero, n1536, one)
+    w3r2 = Reshape (w3r, w3s)
+    w332 = Mul (w3r2, scale)
+    w3 = Cast <to = 10> (w332)
+    p3s = Constant <value = int64[2] {12, 48}> ()
+    p3r = Range (zero, n576, one)
+    p3r2 = Reshape (p3r, p3s)
+    p332 = Mul (p3r2, scale)
+    p3 = Cast <to = 10> (p332)
+    hn = Gemm (window, w3, p3)
+}
+// CHECK-LABEL: func.func @main_graph
+// CHECK-SAME:    ([[X:%.+]]: memref<12x32xf16>
+// CHECK-NOT:   affine.for
+// [n0,k0]: C = P is uploaded into Y (launch_bias); no RedMulEZero.
+// CHECK:       [[W0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].W", resident = true
+// CHECK:       [[X0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].X"
+// CHECK-NEXT:  "aismem.RedMulEUploadTile"([[X]], [[X0]]) <{col_offset = 0 : i32
+// CHECK:       [[Y:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].Y"
+// CHECK-NEXT:  {{.*}}, [[T:%.+]] = "aismem.RedMulEUploadTile"({{%.+}}, [[Y]]) <{{.*}}dst_rows = 12 : i32
+// CHECK-NEXT:  [[G0:%.+]] = "aismem.RedMulEGEMM"([[X0]], [[W0]], [[Y]], [[T]])
+// CHECK-NEXT:  [[T0:%.+]] = "aismem.RedMulEWait"([[G0]])
+// [n0,k1]: accumulates into the same Y.
+// CHECK:       [[W1:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k1].W", resident = true
+// CHECK:       [[X1:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k1].X"
+// CHECK-NEXT:  "aismem.RedMulEUploadTile"([[X]], [[X1]]) <{col_offset = 16 : i32
+// CHECK-NEXT:  "aismem.RedMulEGEMM"([[X1]], [[W1]], [[Y]], [[T0]])
+// CHECK:       "aismem.RedMulEDownload"([[Y]],
+// transB = 1: wt = w^T is split and transposed at compile time, so its tiles
+// are w's tiles: the same resident W buffers and the same X uploads.
+// CHECK-NOT:   "aismem.RedMulEZero"
+// CHECK:       [[YT:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Gemm_1[n0,k0].Y"
+// CHECK:       "aismem.RedMulEGEMM"([[X0]], [[W0]], [[YT]],
+// CHECK:       "aismem.RedMulEGEMM"([[X1]], [[W1]], [[YT]],
+// hn: three N-tiles, each downloaded into its 16 columns of the 12x48 result.
+// CHECK:       [[HN:%.+]] = memref.alloc() {{.*}} : memref<12x48xf16>
+// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{dst_ld = 48 : i32, dst_offset = 0 : i32, elements = 192
+// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{dst_ld = 48 : i32, dst_offset = 16 : i32, elements = 192
+// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{dst_ld = 48 : i32, dst_offset = 32 : i32, elements = 192
+// CHECK:       return
+// Every resident W tile is its own 16x16 global, uploaded as a plain copy
+// (no offsets, no transpose): 2 for w (shared with wt), 6 for w3.
+// CHECK-LABEL: func.func @main_graph_preload
+// CHECK-NOT:   transpose = true
+// CHECK-COUNT-8: "krnl.global"() {name = "{{.*}}", shape = [16, 16]
+// CHECK-NOT:   row_offset = 16
+// CHECK:       return

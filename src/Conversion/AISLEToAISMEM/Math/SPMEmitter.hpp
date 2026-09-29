@@ -37,11 +37,14 @@ constexpr int32_t kK = 16; // columns of W and Y (one SPM row)
 constexpr int32_t kTile = 0; // single-tile chain
 
 // A host-side operand: statically shaped f16 memref viewed row-major as
-// [rows x cols].
+// [rows x cols], or a [rows x cols] window of it at (rowOff, colOff) (an
+// aisle.Window lowered to memref.subview; `memref` is then the source).
 struct Matrix {
   Value memref;
   int64_t rows = 0;
   int64_t cols = 0;
+  int64_t rowOff = 0;
+  int64_t colOff = 0;
 };
 
 // An operand of a block: in SPM already (produced by a previous block), or in
@@ -87,10 +90,42 @@ inline FailureOr<Operand> classify(Operation *op, Value value, StringRef name,
     o.spm = *spm;
     return o;
   }
+  if (getSPMTiles(value))
+    return op->emitError() << name
+                           << " is a tiled SPM result; only a Window of one of "
+                              "its tiles can be a RedMulE operand";
   Value memref = value;
   if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>())
     if (cast.getInputs().size() == 1)
       memref = cast.getInputs().front();
+  // A window (aisle.Window -> memref.subview) of a data-memory operand.
+  if (auto view = memref.getDefiningOp<memref::SubViewOp>()) {
+    auto sourceType = cast<MemRefType>(view.getSource().getType());
+    ArrayRef<int64_t> offsets = view.getStaticOffsets();
+    ArrayRef<int64_t> sizes = view.getStaticSizes();
+    const int64_t rank = sourceType.getRank();
+    bool plain = rank >= 2 && sourceType.hasStaticShape() &&
+                 !ShapedType::isDynamicShape(offsets) &&
+                 !ShapedType::isDynamicShape(sizes) &&
+                 llvm::all_of(view.getStaticStrides(),
+                     [](int64_t s) { return s == 1; });
+    for (int64_t d = 0; plain && d + 2 < rank; ++d)
+      plain = sourceType.getDimSize(d) == 1 && offsets[d] == 0;
+    if (!plain)
+      return op->emitError() << name << ": unsupported window of "
+                             << sourceType;
+    FailureOr<Matrix> m = asMatrix(op, view.getSource(), name);
+    if (failed(m))
+      return failure();
+    m->rows = sizes[rank - 2];
+    m->cols = sizes[rank - 1];
+    m->rowOff = offsets[rank - 2];
+    m->colOff = offsets[rank - 1];
+    if (failed(expectShape(op, m->rows, m->cols, name, rows, cols)))
+      return failure();
+    o.host = *m;
+    return o;
+  }
   FailureOr<Matrix> m = asMatrix(op, memref, name);
   if (failed(m) || failed(expectShape(op, m->rows, m->cols, name, rows, cols)))
     return failure();
@@ -124,17 +159,33 @@ public:
   }
 
   // host window -> fresh SPM buffer of dstRows rows (zero padded).
+  // (rowOff, colOff) are relative to the matrix, which may itself be a
+  // window of its memref.
   SPMValue upload(const Matrix &m, int64_t rowOff, int64_t colOff,
       int64_t rows, int64_t cols, int64_t dstRows, const Twine &name,
-      bool resident, ValueRange deps) {
+      bool resident, ValueRange deps, bool transpose = false) {
+    rowOff += m.rowOff;
+    colOff += m.colOff;
+    Value source = m.memref;
+    // A constant is uploaded from its exact SPM image, built here at compile
+    // time (window, transpose, zero padding): a plain whole-tile copy.
+    if (!isPlainUpload(source, rowOff, colOff, rows, cols, dstRows, transpose))
+      if (Value image = constantImage(
+              source, rowOff, colOff, rows, cols, dstRows, transpose)) {
+        source = image;
+        rowOff = colOff = 0;
+        rows = dstRows;
+        cols = kK;
+        transpose = false;
+      }
     Value address = alloc(dstRows, name, resident);
-    SmallVector<Value> operands{m.memref, address};
+    SmallVector<Value> operands{source, address};
     operands.append(deps.begin(), deps.end());
     SmallVector<NamedAttribute> attrs{attr("tile", kTile),
         attr("row_offset", rowOff), attr("col_offset", colOff),
         attr("rows", rows), attr("cols", cols), attr("dst_rows", dstRows),
         attr("dst_cols", kK),
-        rewriter.getNamedAttr("transpose", rewriter.getBoolAttr(false)),
+        rewriter.getNamedAttr("transpose", rewriter.getBoolAttr(transpose)),
         rewriter.getNamedAttr("relu", rewriter.getBoolAttr(false)),
         rewriter.getNamedAttr("negate", rewriter.getBoolAttr(false))};
     auto op = rewriter.create<AISMEMRedMulEUploadTileOp>(loc,
@@ -155,10 +206,12 @@ public:
 
   // A W operand from data memory: a rows x 16 window at (rowOff, colOff),
   // zero padded to 16 rows; resident when the source is a constant.
+  // With `transpose`, the window is read as rows x 16 of the source and
+  // stored transposed (a W tile of B^T for Gemm transB = 1).
   Value weightWindow(const Matrix &m, int64_t rowOff, int64_t colOff,
-      int64_t rows, const Twine &name) {
+      int64_t rows, const Twine &name, bool transpose = false) {
     return upload(m, rowOff, colOff, rows, kK, kN, name, isConstant(m.memref),
-        ValueRange{})
+        ValueRange{}, transpose)
         .address;
   }
 
@@ -310,6 +363,67 @@ public:
     SmallVector<Value> all(deps.begin(), deps.end());
     all.push_back(c->spm->token);
     return {y, copy(c->spm->address, y, kM, all), kTile};
+  }
+
+  // Does this upload copy whole 16-element rows of a row-major [.. x 16]
+  // source unchanged (the runtime's plain-copy path)?
+  static bool isPlainUpload(Value source, int64_t rowOff, int64_t colOff,
+      int64_t rows, int64_t cols, int64_t dstRows, bool transpose) {
+    auto type = cast<MemRefType>(source.getType());
+    return rowOff == 0 && colOff == 0 && !transpose && cols == kK &&
+           rows == dstRows && type.getShape().back() == kK &&
+           type.getNumElements() == dstRows * kK;
+  }
+
+  // For a constant (krnl.global) source: a krnl.global holding exactly what
+  // the upload would put in SPM, [dstRows x 16] -- the rows x cols window at
+  // (rowOff, colOff), transposed on request, zero padded.  One per distinct
+  // image and function (found again by name).  Null for other sources.
+  Value constantImage(Value source, int64_t rowOff, int64_t colOff,
+      int64_t rows, int64_t cols, int64_t dstRows, bool transpose) {
+    Operation *global = source.getDefiningOp();
+    if (!isConstant(source))
+      return {};
+    auto dense = global->getAttrOfType<DenseElementsAttr>("value");
+    auto name = global->getAttrOfType<StringAttr>("name");
+    if (!dense || !name || !dense.getElementType().isF16())
+      return {};
+    const std::string imageName =
+        (name.getValue() + "_spm_r" + Twine(rowOff) + "c" + Twine(colOff) +
+            "_" + Twine(rows) + "x" + Twine(cols) + "_" + Twine(dstRows) +
+            (transpose ? "t" : ""))
+            .str();
+    Operation *parent = rewriter.getInsertionBlock()->getParentOp();
+    Value found;
+    parent->walk([&](Operation *op) {
+      if (!found && op->getName().getStringRef() == "krnl.global")
+        if (auto n = op->getAttrOfType<StringAttr>("name"))
+          if (n.getValue() == imageName)
+            found = op->getResult(0);
+    });
+    if (found)
+      return found;
+
+    const int64_t ld = cast<MemRefType>(source.getType()).getShape().back();
+    SmallVector<APFloat> all(dense.getValues<APFloat>());
+    APFloat zero = APFloat::getZero(APFloat::IEEEhalf());
+    SmallVector<APFloat> image(dstRows * kK, zero);
+    const int64_t outRows = transpose ? cols : rows;
+    const int64_t outCols = transpose ? rows : cols;
+    for (int64_t i = 0; i < outRows; ++i)
+      for (int64_t j = 0; j < outCols; ++j) {
+        const int64_t si = transpose ? j : i, sj = transpose ? i : j;
+        image[i * kK + j] = all[(rowOff + si) * ld + colOff + sj];
+      }
+    Type f16 = rewriter.getF16Type();
+    auto tensorType = RankedTensorType::get({dstRows, kK}, f16);
+    OperationState state(loc, "krnl.global");
+    state.addAttribute("shape", rewriter.getI64ArrayAttr({dstRows, kK}));
+    state.addAttribute("name", rewriter.getStringAttr(imageName));
+    state.addAttribute("value", DenseElementsAttr::get(tensorType, image));
+    state.addAttribute("alignment", rewriter.getI64IntegerAttr(16));
+    state.addTypes(MemRefType::get({dstRows, kK}, f16));
+    return rewriter.create(state)->getResult(0);
   }
 
   NamedAttribute attr(StringRef name, int64_t value) {

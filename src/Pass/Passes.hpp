@@ -130,6 +130,10 @@ void populateFuncToLLVMConversionPatterns(mlir::LLVMTypeConverter &converter,
 
 std::unique_ptr<mlir::Pass> createLowerToAISLEPass();
 
+/// Split f16 aisle.MatMul / aisle.GEMM into native RedMulE launches on
+/// aisle.Window views (aisle-tile).
+std::unique_ptr<mlir::Pass> createAISLETilingPass();
+
 std::unique_ptr<mlir::Pass> createLowerToAISMEMPass();
 
 /// Assign SPM rows to aismem.SPMAlloc buffers; hoist resident weights into

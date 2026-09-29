@@ -3,6 +3,7 @@
 
 # Please keep in alphabetical order.
 add_onnx_mlir_library(OMONNXToAISLE
+  AISLETiling.cpp
   ConvertONNXToAISLE.cpp
   Math/ComplexGEMM.cpp
   Math/GEMM.cpp

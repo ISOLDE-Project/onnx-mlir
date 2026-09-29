@@ -215,7 +215,12 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
     onnx_mlir::addONNXToMLIRPasses(
         pm, /*target CPU*/ onnx_mlir::maccel.empty());
     pm.addPass(spade::createLowerToAISLEPass());
+    // RedMulE tiling: products larger than one launch become native launches
+    // on aisle.Window views; the canonicalizer folds Windows of Concats, CSE
+    // merges the Windows and shape operands the tiles share.
+    pm.addPass(spade::createAISLETilingPass());
     pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(mlir::createCSEPass());
   }
 
   if (emissionTarget >= onnx_mlir::EmitSPADEMLIR) {

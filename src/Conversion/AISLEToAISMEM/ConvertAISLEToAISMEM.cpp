@@ -107,7 +107,7 @@ void AISLEToAISMEMLoweringPass::runOnOperation() {
   // reported here rather than silently reaching the LLVM lowering.
   target.addIllegalOp<spade::AISLEMultiHeadAttentionOp,
       spade::AISLEPositionwiseFeedForwardOp, spade::AISLEMatMulOp,
-      spade::AISLEAddOp>();
+      spade::AISLEAddOp, spade::AISLEWindowOp, spade::AISLEConcatOp>();
 
   RewritePatternSet patterns(&getContext());
 

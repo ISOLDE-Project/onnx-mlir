@@ -20,6 +20,12 @@ CMAKE ?=  cmake
 
 ONNX_MLIR_BUILD_TYPE    ?= "Debug"
 ONNX_MLIR_CMAKE_TARGET  ?= onnx-mlir
+# Executables `make install` copies into $(ONNX_INSTALL_DIR)/bin.  Only these
+# are installed: `cmake --install` would also want every library and the
+# Python modules, which the ISOLDE flow never builds.
+ONNX_MLIR_INSTALL_BINS  ?= onnx-mlir onnx-mlir-opt
+# onnx-mlir puts its executables in build/<build type>/bin.
+ONNX_MLIR_BIN_DIR       ?= build/$(strip $(subst ",,$(ONNX_MLIR_BUILD_TYPE)))/bin
 
 .PHONY: compiler
 compiler:
@@ -46,6 +52,25 @@ config:
 toolchain-onnx-mlir: config
 	cd $(ROOT_DIR)/toolchain/onnx-mlir && \
 	$(CMAKE) --build build --target $(ONNX_MLIR_CMAKE_TARGET) -j$(num_cores_half)
+
+## (re)build the installed executables incrementally and copy them into
+## $(ONNX_INSTALL_DIR)/bin (install/onnx-mlir of the ibex repo links there);
+## run from the onnx-mlir checkout, after `make config` once
+.PHONY: install
+install:
+	@test -d build || (echo "No build/ here: run make config first"; exit 1)
+	$(CMAKE) --build build --target $(ONNX_MLIR_INSTALL_BINS) -j$(num_cores_half)
+	mkdir -p $(ONNX_INSTALL_DIR)/bin
+	for bin in $(ONNX_MLIR_INSTALL_BINS); do \
+	  install -m 755 $(ONNX_MLIR_BIN_DIR)/$$bin $(ONNX_INSTALL_DIR)/bin/$$bin || exit 1; \
+	done
+	@echo "installed from $$(git rev-parse --short HEAD) ($$(git rev-parse --abbrev-ref HEAD)) into $(ONNX_INSTALL_DIR)/bin:"
+	@ls -l $(addprefix $(ONNX_INSTALL_DIR)/bin/,$(ONNX_MLIR_INSTALL_BINS))
+	@if strings $(ONNX_INSTALL_DIR)/bin/onnx-mlir | grep -q aisle-tile; then \
+	  echo "onnx-mlir has the RedMulE tiling (aisle-tile)"; \
+	else \
+	  echo "WARNING: onnx-mlir has no aisle-tile pass (branch without the ISOLDE tiling patches?)"; \
+	fi
 
 .PHONY: test test-clean
 test:

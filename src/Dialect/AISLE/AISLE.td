@@ -414,6 +414,54 @@ def AISLEQConstantOp : AISLE_Op< "qconstant",  [Pure, OpInterface<"mlir::ResultT
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
+// Window / Concat: the tiling vocabulary of aisle-tile
+//===----------------------------------------------------------------------===//
+
+def AISLEWindowOp: AISLE_Op<"Window", [Pure]> {
+  let summary = "Static rectangular view of a tensor (no data movement)";
+  let description = [{
+    `output = input[offsets[0] : offsets[0] + sizes[0], ...]`, where `sizes`
+    is the static shape of the result.  A Window never copies: when its input
+    lives in data memory, AISLE -> AISMEM folds it into the offsets of the
+    upload that reads it (`aismem.RedMulEUploadTile`); when its input is a
+    tiled SPM result (`aisle.Concat`), it selects one of the tiles.
+
+    Unlike onnx.Slice it has only static offsets and unit steps, so it is
+    legal wherever AISLE is and needs no lowering of its own.
+
+    ```mlir
+    %x1 = "aisle.Window"(%x) {offsets = array<i64: 0, 16>}
+        : (tensor<12x32xf16>) -> tensor<12x16xf16>
+    ```
+  }];
+  let arguments = (ins
+    AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, TensorOf<[F64]>]>:$input,
+    DenseI64ArrayAttr:$offsets
+  );
+  let results = (outs AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, TensorOf<[F64]>]>:$output);
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def AISLEConcatOp: AISLE_Op<"Concat", [Pure]> {
+  let summary = "Concatenation of equally shaped tiles along one axis";
+  let description = [{
+    Assembles the result tiles of a tiled operation, e.g. the N-tiles of a
+    Gemm whose output is wider than one RedMulE tile.  In AISLE -> AISMEM the
+    tiles stay where they are (one SPM buffer each); a Window that selects a
+    whole tile folds to that tile, and only a non-RedMulE user makes them go
+    back to data memory (one strided download per tile).
+  }];
+  let arguments = (ins
+    Variadic<AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, TensorOf<[F64]>]>>:$inputs,
+    I64Attr:$axis
+  );
+  let results = (outs AnyTypeOf<[TensorOf<[F16]>, TensorOf<[F32]>, TensorOf<[F64]>]>:$output);
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+//===----------------------------------------------------------------------===//
 //ComplexGEMM
 // ISOLDE split-complex matrix multiplication. Keep this operation at the
 // mathematical/AISLE level; mapping to individual RedMulE instances happens

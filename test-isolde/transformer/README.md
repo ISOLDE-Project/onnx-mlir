@@ -25,18 +25,20 @@ the next GEMM directly, the residual Adds accumulate in place, ReLU and K^T
 run in SPM.  Constant weights are resident: `main_graph_preload()` uploads
 them once.  The single-tile chain waits after every launch.
 
-MatMul and Add use the same launch, `Y = X . W + Y`: MatMul zeroes Y and
-accumulates its two 16-wide K-tiles; Add sets X to the 12x16 identity
+MatMul and Add use the same launch, `Y = X . W + Y`: the `aisle-tile` pass
+splits the MatMul into two chained K-tile launches on `aisle.Window` views
+(the first zeroes Y, the second accumulates); Add sets X to the 12x16 identity
 (resident), W to one operand zero padded to 16 rows, and Y to the other
 operand (in place when it may be overwritten).
 
 A rank-2 MatMul followed by an Add is canonicalized by onnx-mlir into
-`onnx.Gemm` (see `test-isolde/projection`).  It becomes one `aisle.GEMM`
-and costs no extra launch: C is uploaded into Y (firmware `launch_bias`),
-then the K-tiles accumulate (`launch_accumulate`).  `transB = 1` uploads the
-W windows transposed.  The tiling is done with upload windows in
-AISLEToAISMEM, never with `onnx.Slice` (no RedMulE lowering, and not legal
-inside ONNXToAISLE).
+`onnx.Gemm` (see `test-isolde/projection`).  It becomes one `aisle.GEMM`,
+which `aisle-tile` splits into K-tiles (and N-tiles when wider than 16): the
+Add costs no extra launch, C is uploaded into Y of the first K-tile
+(firmware `launch_bias`), the next K-tile accumulates (`launch_accumulate`).
+`transB = 1` uploads the W windows transposed.  Windows are `aisle.Window`
+views folded into the upload offsets, never `onnx.Slice` (no RedMulE
+lowering, and not legal inside ONNXToAISLE); see `src/Dialect/AISLE/AISLE.md`.
 
 * `models/generate_transformer.py` writes the model (every `com.isolde` op
   carries a FunctionProto body, so onnxruntime runs it as-is) and an `.npz`

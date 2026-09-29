@@ -1,7 +1,9 @@
 // RUN: onnx-mlir --EmitSPADEMLIR --printIR %s | FileCheck %s
 
 // Input projection + positional encoding of the radar encoder on RedMulE:
-//   MatMul [1,12,32] x [32,16]: Y = 0, two K-tiles accumulate in Y;
+//   MatMul [1,12,32] x [32,16]: aisle-tile splits it into two chained
+//                               launches [n0,k0] (Y = 0) and [n0,k1] (Y
+//                               accumulates in place);
 //   Add    [1,12,16] + [12,16]: X = identity, W = pad16(P), Y = MatMul result
 //                               (in place: it has no other user).
 // The f32 MatMul is not a RedMulE shape/type and stays on the Krnl path.
@@ -23,18 +25,20 @@ agraph (float16[1,12,32] x, float[12,16] a, float[16,4] b) => (float16[1,12,16] 
 }
 // CHECK-LABEL: func.func @main_graph
 // CHECK-SAME:    ([[X:%.+]]: memref<1x12x32xf16>
-// MatMul: both 16x16 K-tiles of W are resident, X is split into two tiles.
-// CHECK:     [[W0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}W[0,:]", resident = true
-// CHECK:     [[W1:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}W[16,:]", resident = true
-// CHECK:     [[X0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}X[:,0]"
+// K-tile 0: resident W, X = window [:, 0:16] of x, Y = 0.
+// CHECK:     [[W0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].W", resident = true
+// CHECK:     [[X0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].X"
 // CHECK-NEXT: "aismem.RedMulEUploadTile"([[X]], [[X0]]) <{col_offset = 0 : i32
-// CHECK:     [[X1:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}X[:,16]"
-// CHECK-NEXT: "aismem.RedMulEUploadTile"([[X]], [[X1]]) <{col_offset = 16 : i32
-// CHECK:     [[Y:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Y"
+// CHECK:     [[Y:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].Y"
 // CHECK-NEXT: [[Z:%.+]] = "aismem.RedMulEZero"([[Y]]) <{elements = 192 : i32
 // CHECK-NEXT: [[G0:%.+]] = "aismem.RedMulEGEMM"([[X0]], [[W0]], [[Y]], [[Z]])
 // CHECK-NEXT: [[T0:%.+]] = "aismem.RedMulEWait"([[G0]])
-// CHECK-NEXT: "aismem.RedMulEGEMM"([[X1]], [[W1]], [[Y]], [[T0]])
+// K-tile 1: X = window [:, 16:32], accumulates into the same Y.  W is a
+// splat, so its two compile-time tiles are equal: one constant, one buffer.
+// CHECK:     [[X1:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k1].X"
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[X]], [[X1]]) <{col_offset = 16 : i32
+// CHECK-NOT: RedMulEZero
+// CHECK:     "aismem.RedMulEGEMM"([[X1]], [[W0]], [[Y]], [[T0]])
 // Add: X = the resident identity, W = pad16(P) (resident), Y = e in place.
 // CHECK:     [[I:%.+]] = "aismem.SPMAlloc"() <{name = "aismem.identity12x16", resident = true, row = {{[0-9]+}} : i32, rows = 12
 // CHECK:     [[P:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}W", resident = true, row = {{[0-9]+}} : i32, rows = 16
@@ -46,3 +50,8 @@ agraph (float16[1,12,32] x, float[12,16] a, float[16,4] b) => (float16[1,12,16] 
 
 // CHECK-LABEL: func.func @main_graph_preload
 // CHECK:     "krnl.global"() {alignment = 16 : i64, name = "aismem_identity_12x16"
+// The Add's W = pad16(P) is padded at compile time: a 16x16 global holding
+// P's 12 rows (0.25 = 0x3400) and 4 zero rows, uploaded as a plain copy.
+// CHECK:     [[PW:%.+]] = "krnl.global"() {alignment = 16 : i64, name = "constant_{{[0-9]+}}_spm_r0c0_12x16_16", shape = [16, 16], value = dense<"0x{{(0034){192}(0000){63}0000}}"> : tensor<16x16xf16>}
+// CHECK-NEXT: "aismem.SPMAlloc"() <{name = "{{.*}}Add{{.*}}.W"
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[PW]], {{%.+}}) <{col_offset = 0 : i32, cols = 16 : i32, dst_cols = 16 : i32, dst_rows = 16 : i32, negate = false, relu = false, row_offset = 0 : i32, rows = 16 : i32

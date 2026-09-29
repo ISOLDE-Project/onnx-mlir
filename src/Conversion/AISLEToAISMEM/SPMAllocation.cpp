@@ -56,7 +56,7 @@ namespace spade {
 void materializeSPMResults(ModuleOp module) {
   SmallVector<UnrealizedConversionCastOp> casts;
   module.walk([&](UnrealizedConversionCastOp cast) {
-    if (getSPMValue(cast.getResult(0)))
+    if (cast->getNumResults() == 1 && getSPMTiles(cast.getResult(0)))
       casts.push_back(cast);
   });
   for (UnrealizedConversionCastOp cast : casts) {
@@ -64,7 +64,7 @@ void materializeSPMResults(ModuleOp module) {
       cast.erase();
       continue;
     }
-    SPMValue value = *getSPMValue(cast.getResult(0));
+    SmallVector<SPMValue> tiles = *getSPMTiles(cast.getResult(0));
     auto tensorType = cast.getResult(0).getType().cast<RankedTensorType>();
     auto memrefType =
         MemRefType::get(tensorType.getShape(), tensorType.getElementType());
@@ -73,14 +73,28 @@ void materializeSPMResults(ModuleOp module) {
     Location loc = cast.getLoc();
     auto alloc = builder.create<memref::AllocOp>(loc, memrefType);
     alloc.setAlignmentAttr(builder.getI64IntegerAttr(16));
-    builder.create<AISMEMRedMulEDownloadOp>(loc,
-        TypeRange{builder.getNoneType()},
-        ValueRange{value.address, alloc.getResult(), value.token},
-        ArrayRef<NamedAttribute>{
-            builder.getNamedAttr("tile", builder.getI32IntegerAttr(value.tile)),
-            builder.getNamedAttr("elements",
-                builder.getI32IntegerAttr(
-                    static_cast<int32_t>(memrefType.getNumElements())))});
+    // One tile: a contiguous copy.  N tiles side by side: tile j fills
+    // columns [16j, 16j + 16) of every row.
+    const int64_t rowLength = tensorType.getShape().back();
+    const int64_t tileElements =
+        memrefType.getNumElements() / static_cast<int64_t>(tiles.size());
+    const int64_t tileCols = rowLength / static_cast<int64_t>(tiles.size());
+    for (auto [j, tile] : llvm::enumerate(tiles)) {
+      SmallVector<NamedAttribute> attrs{
+          builder.getNamedAttr("tile", builder.getI32IntegerAttr(tile.tile)),
+          builder.getNamedAttr("elements",
+              builder.getI32IntegerAttr(static_cast<int32_t>(tileElements)))};
+      if (tiles.size() > 1) {
+        attrs.push_back(builder.getNamedAttr("dst_offset",
+            builder.getI32IntegerAttr(static_cast<int32_t>(j * tileCols))));
+        attrs.push_back(builder.getNamedAttr(
+            "dst_ld", builder.getI32IntegerAttr(
+                          static_cast<int32_t>(rowLength))));
+      }
+      builder.create<AISMEMRedMulEDownloadOp>(loc,
+          TypeRange{builder.getNoneType()},
+          ValueRange{tile.address, alloc.getResult(), tile.token}, attrs);
+    }
     Value tensor =
         builder
             .create<UnrealizedConversionCastOp>(
@@ -137,13 +151,68 @@ AISMEMRedMulEUploadTileOp residentFill(AISMEMSPMAllocOp alloc) {
   return fill;
 }
 
+// A read-only upload: fills a fresh buffer from an immutable source (a
+// function argument or a krnl.global) and the buffer is only read as a GEMM
+// X or W operand afterwards, with no one waiting on the upload's token.
+bool isReadOnlyUpload(AISMEMRedMulEUploadTileOp upload) {
+  auto alloc = upload.getSpmAddress().getDefiningOp<AISMEMSPMAllocOp>();
+  if (!alloc || !upload.getNoneVal().use_empty() ||
+      !upload.getDependencies().empty())
+    return false;
+  Value src = upload.getSource();
+  Operation *def = src.getDefiningOp();
+  if (!isa<BlockArgument>(src) &&
+      !(def && def->getName().getStringRef() == "krnl.global"))
+    return false;
+  for (OpOperand &use : alloc.getAddress().getUses()) {
+    Operation *user = use.getOwner();
+    if (user == upload.getOperation())
+      continue;
+    if (!isa<AISMEMRedMulEGEMMOp>(user) || use.getOperandNumber() > 1)
+      return false;
+  }
+  return true;
+}
+
+// Tiling reads the same window more than once (the X tile of every N-tile):
+// keep the first read-only upload of each window and let later readers use
+// its buffer (the allocator extends its lifetime accordingly).
+void reuseUploads(func::FuncOp f) {
+  SmallVector<AISMEMRedMulEUploadTileOp> kept;
+  SmallVector<AISMEMRedMulEUploadTileOp> uploads;
+  f.walk([&](AISMEMRedMulEUploadTileOp u) { uploads.push_back(u); });
+  for (AISMEMRedMulEUploadTileOp u : uploads) {
+    if (!isReadOnlyUpload(u))
+      continue;
+    auto alloc = u.getSpmAddress().getDefiningOp<AISMEMSPMAllocOp>();
+    auto same = llvm::find_if(kept, [&](AISMEMRedMulEUploadTileOp k) {
+      auto kAlloc = k.getSpmAddress().getDefiningOp<AISMEMSPMAllocOp>();
+      return k.getSource() == u.getSource() &&
+             k->getAttrDictionary() == u->getAttrDictionary() &&
+             kAlloc.getRows() == alloc.getRows() &&
+             kAlloc.getTile() == alloc.getTile() &&
+             kAlloc.getResident() == alloc.getResident() &&
+             k->getBlock() == u->getBlock();
+    });
+    if (same == kept.end()) {
+      kept.push_back(u);
+      continue;
+    }
+    alloc.getAddress().replaceAllUsesExcept(
+        same->getSpmAddress(), u.getOperation());
+    u.erase();
+    alloc.erase();
+  }
+}
+
 struct SPMAllocationPass
     : public PassWrapper<SPMAllocationPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SPMAllocationPass)
 
   StringRef getArgument() const override { return "aismem-spm-allocate"; }
   StringRef getDescription() const override {
-    return "Assign RedMulE SPM rows to aismem.SPMAlloc buffers and hoist "
+    return "Assign RedMulE SPM rows to aismem.SPMAlloc buffers (after "
+           "merging repeated read-only uploads of the same window) and hoist "
            "resident weight uploads into <function>_preload.";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -176,6 +245,7 @@ struct SPMAllocationPass
   LogicalResult allocate(ModuleOp module, func::FuncOp f) {
     if (f.isExternal())
       return success();
+    reuseUploads(f);
     SmallVector<AISMEMSPMAllocOp> allocs;
     f.walk([&](AISMEMSPMAllocOp op) { allocs.push_back(op); });
     if (allocs.empty())
@@ -292,20 +362,30 @@ struct SPMAllocationPass
         preload->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
       Block *entry = preload.addEntryBlock();
       builder.setInsertionPointToStart(entry);
+      // One copy of every weight global in the preload function, however
+      // many resident windows read it.
+      DenseMap<Operation *, Value> preloaded;
       for (Buffer *b : hoisted) {
         AISMEMRedMulEUploadTileOp fill = b->fill;
         Operation *global = fill.getSource().getDefiningOp();
-        Value source;
-        if (global->hasOneUse()) {
-          global->moveBefore(entry, entry->end());
-          source = global->getResult(0);
-        } else {
-          Operation *copy = builder.clone(*global);
-          copy->setAttr("name",
-              builder.getStringAttr(
-                  global->getAttrOfType<StringAttr>("name").str() +
-                  "_preload"));
-          source = copy->getResult(0);
+        Value &source = preloaded[global];
+        if (!source) {
+          bool onlyResidentFills = llvm::all_of(global->getUsers(),
+              [&](Operation *user) {
+                return llvm::any_of(hoisted,
+                    [&](Buffer *h) { return h->fill == user; });
+              });
+          if (onlyResidentFills) {
+            global->moveBefore(entry, entry->end());
+            source = global->getResult(0);
+          } else {
+            Operation *copy = builder.clone(*global);
+            copy->setAttr("name",
+                builder.getStringAttr(
+                    global->getAttrOfType<StringAttr>("name").str() +
+                    "_preload"));
+            source = copy->getResult(0);
+          }
         }
         builder.setInsertionPointToEnd(entry);
         Value address = builder.clone(*b->op)->getResult(0);
