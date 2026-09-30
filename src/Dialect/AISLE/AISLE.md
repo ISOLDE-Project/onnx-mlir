@@ -179,9 +179,22 @@ Buffers are `aismem.SPMAlloc` ops (`tile`, `rows`, `name`, `resident`).  The
 * all other buffers by a first-fit linear scan over their lifetimes in
   program order (a buffer read by a launch lives until the wait that retires
   it), so dead rows are reused;
-* options: `rows-per-tile` (512 = the 32 KiB narrow window of `demo_3`),
-  `resident-weights` (default true), `print-map`.  Overflow is an error that
-  lists every buffer.  The function gets `aismem.spm_rows_used`.
+* capacity: `rows-per-tile`, onnx-mlir `--redmule-spm-rows` (default 256).
+  The narrow window of `demo_3` is 32 KiB (512 rows), but the tmp/cluster
+  RTL addresses each tile's bank memories with 8 row bits
+  (`isolde_log_interconnect`: `addr[TCDM_AW-1:2] = mems_add`, TCDM_AW = 10),
+  so row r + 256 is row r.  A 512-row schedule for the 2-layer radar encoder
+  (384 rows on tile 0) ran on RTL and produced NaN logits.  Use 512 only
+  on an RTL that addresses the whole window;
+* if a tile does not fit, resident weights are demoted to per-call uploads,
+  one at a time (the one giving the smallest peak), with a warning on
+  stderr: the 2-layer encoder keeps 4,032 fp16 resident and uploads 8
+  weights (2,048 fp16) per call in 256 rows.  Overflow even without residents
+  is an error that lists every buffer;
+* other options: `resident-weights` (`--redmule-resident-weights`, default
+  true), `print-map` (`--redmule-print-spm-map`).  The function gets
+  `aismem.spm_rows_used`.  `check_aismem.py` flags rows beyond `SPM_ROWS`
+  (environment, default 256).
 
 Per encoder layer (radar model), with attention on three tiles, this moves
 1,088 values into SPM and 576 out (the layer input to three tiles, K and V

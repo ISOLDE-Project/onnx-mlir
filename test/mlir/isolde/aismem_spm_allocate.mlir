@@ -27,7 +27,7 @@ func.func @chain(%arg0: memref<12x16xf16>) -> memref<12x16xf16> {
   return %out : memref<12x16xf16>
 }
 
-// CHECK:       SPM map of @chain (512 rows per tile, 64 B per row)
+// CHECK:       SPM map of @chain (256 rows per tile, 64 B per row)
 // CHECK-NEXT:    tile 0: 40 rows used
 // CHECK-NEXT:      rows [0, 16)  W  resident
 // CHECK-NEXT:      rows [16, 28)  X  live
@@ -53,7 +53,8 @@ func.func @chain(%arg0: memref<12x16xf16>) -> memref<12x16xf16> {
 // CHECK:         "aismem.RedMulEUploadTile"([[G]], [[A]])
 // CHECK:         return
 
-// OVERFLOW: error: SPM of tile 0 overflows: 40 rows needed, 36 available (16 resident)
+// W is needed by all three GEMMs: demoting it does not help.
+// OVERFLOW: error: SPM of tile 0 overflows: 40 rows needed, 36 available (0 resident)
 
 // Without residency W is an ordinary buffer: uploaded per call, no preload.
 // STREAM-LABEL: func.func @chain

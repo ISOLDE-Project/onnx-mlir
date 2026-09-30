@@ -48,6 +48,9 @@ bool printIR;                                          // onnx-mlir only
 bool preserveBitcode;                                  // onnx-mlir only
 bool preserveLLVMIR;                                   // onnx-mlir only
 bool preserveMLIR;                                     // onnx-mlir only
+unsigned redmuleSpmRows;                               // onnx-mlir only
+bool redmuleResidentWeights;                           // onnx-mlir only
+bool redmulePrintSpmMap;                               // onnx-mlir only
 bool useOnnxModelTypes;                                // onnx-mlir only
 int repeatOnnxTransform;                               // onnx-mlir only
 std::string shapeInformation;                          // onnx-mlir only
@@ -264,6 +267,27 @@ static llvm::cl::opt<bool, true> preserveLLVMIROpt("preserveLLVMIR",
 static llvm::cl::opt<bool, true> preserveMLIROpt("preserveMLIR",
     llvm::cl::desc("dont delete the MLIR files (input and llvm):"),
     llvm::cl::location(preserveMLIR), llvm::cl::init(false),
+    llvm::cl::cat(OnnxMlirOptions));
+
+// ISOLDE RedMulE SPM (aismem-spm-allocate).
+static llvm::cl::opt<unsigned, true> redmuleSpmRowsOpt("redmule-spm-rows",
+    llvm::cl::desc("SPM rows (64 bytes each) per RedMulE tile the schedule "
+                   "may use (default 256: the rows the tmp/cluster RTL "
+                   "addresses, TCDM_AW = 10; 512 fills the 32 KiB window)"),
+    llvm::cl::location(redmuleSpmRows), llvm::cl::init(256),
+    llvm::cl::cat(OnnxMlirOptions));
+
+static llvm::cl::opt<bool, true> redmuleResidentWeightsOpt(
+    "redmule-resident-weights",
+    llvm::cl::desc("Keep constant RedMulE operands in SPM, uploaded once by "
+                   "<entry>_preload (default true; weights that do not fit "
+                   "are uploaded per call)"),
+    llvm::cl::location(redmuleResidentWeights), llvm::cl::init(true),
+    llvm::cl::cat(OnnxMlirOptions));
+
+static llvm::cl::opt<bool, true> redmulePrintSpmMapOpt("redmule-print-spm-map",
+    llvm::cl::desc("Print the SPM map of every function"),
+    llvm::cl::location(redmulePrintSpmMap), llvm::cl::init(false),
     llvm::cl::cat(OnnxMlirOptions));
 
 static llvm::cl::opt<bool, true> useOnnxModelTypesOpt("useOnnxModelTypes",

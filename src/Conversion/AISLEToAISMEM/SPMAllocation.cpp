@@ -17,9 +17,14 @@
 //     A buffer read by an asynchronous RedMulE launch lives until the wait
 //     that retires the launch.
 //
-// A tile has `rows-per-tile` rows (default 512: the 32 KiB narrow SPM window
-// of platform demo_3 at 64 bytes per row).  Running out of rows is an error;
-// with --print-map the pass prints the SPM map of every function.
+// A tile has `rows-per-tile` rows (onnx-mlir --redmule-spm-rows; default
+// 256).  The narrow window of platform demo_3 is 32 KiB (512 rows of 64
+// bytes), but the tile's bank memories are addressed with TCDM_AW = 10 bits
+// (isolde_tcdm_pkg): row r and row r + 256 are the same memory, so a
+// schedule for 512 rows silently corrupts itself on that RTL.
+// If the rows do not suffice, resident weights are demoted to per-call
+// uploads (with a warning) until they do; running out of rows even then is
+// an error.  With print-map the pass prints the SPM map of every function.
 //
 // Also: materializeSPMResults(), used by convert-aisle-to-aismem to download
 // SPM-resident block results that reach non-RedMulE users.
@@ -35,6 +40,7 @@
 #include "src/Conversion/AISLEToAISMEM/Math/SPMValue.hpp"
 #include "src/Dialect/AISMEM/AISMEMDialect.hpp"
 #include "src/Dialect/AISMEM/AISMEMOps.hpp"
+#include "src/Pass/Passes.hpp"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
@@ -223,10 +229,15 @@ struct SPMAllocationPass
   SPMAllocationPass() = default;
   SPMAllocationPass(const SPMAllocationPass &pass)
       : PassWrapper<SPMAllocationPass, OperationPass<ModuleOp>>() {}
+  SPMAllocationPass(unsigned rows, bool resident, bool map) {
+    rowsPerTile = rows;
+    residentWeights = resident;
+    printMap = map;
+  }
 
   Option<unsigned> rowsPerTile{*this, "rows-per-tile",
       llvm::cl::desc("SPM rows per RedMulE tile (64 bytes each)"),
-      llvm::cl::init(512)};
+      llvm::cl::init(kDefaultSPMRowsPerTile)};
   Option<bool> residentWeights{*this, "resident-weights",
       llvm::cl::desc("Keep constant weights in SPM, uploaded once by "
                      "<function>_preload"),
@@ -234,6 +245,39 @@ struct SPMAllocationPass
   Option<bool> printMap{*this, "print-map",
       llvm::cl::desc("Print the SPM map of every function"),
       llvm::cl::init(false)};
+
+  // Rows for `list` (one tile): resident buffers at the bottom, [0, base),
+  // the others first fit over their lifetimes.  Returns the peak row count.
+  static int64_t place(ArrayRef<Buffer *> list, int64_t &base) {
+    base = 0;
+    for (Buffer *b : list)
+      if (b->resident) {
+        b->row = base;
+        base += b->rows;
+      }
+    SmallVector<Buffer *> transient;
+    for (Buffer *b : list)
+      if (!b->resident)
+        transient.push_back(b);
+    llvm::stable_sort(
+        transient, [](Buffer *a, Buffer *b) { return a->def < b->def; });
+    SmallVector<Buffer *> active;
+    int64_t peak = base;
+    for (Buffer *b : transient) {
+      llvm::erase_if(active, [&](Buffer *a) { return a->last < b->def; });
+      llvm::sort(active, [](Buffer *x, Buffer *y) { return x->row < y->row; });
+      int64_t row = base;
+      for (Buffer *a : active) {
+        if (a->row - row >= b->rows)
+          break;
+        row = std::max(row, a->row + a->rows);
+      }
+      b->row = row;
+      active.push_back(b);
+      peak = std::max(peak, row + b->rows);
+    }
+    return peak;
+  }
 
   void runOnOperation() final {
     ModuleOp module = getOperation();
@@ -296,40 +340,45 @@ struct SPMAllocationPass
     }
 
     // ---- placement, per tile ------------------------------------------------
+    // Resident buffers first, at the bottom; the others first fit over their
+    // lifetimes.  If a tile does not fit, resident weights are demoted to
+    // ordinary buffers, uploaded on every call where they are used (as the
+    // hand-written firmware does), one at a time -- each time the one whose
+    // demotion gives the smallest peak -- until the tile fits.
     const int64_t capacity = rowsPerTile;
     std::map<int64_t, SmallVector<Buffer *>> byTile;
     for (Buffer &b : buffers)
       byTile[b.tile].push_back(&b);
     std::map<int64_t, int64_t> peakRows;
+    std::map<int64_t, int64_t> residentRows;
+    std::map<int64_t, SmallVector<Buffer *>> demoted;
     for (auto &[tile, list] : byTile) {
-      int64_t base = 0; // resident region [0, base)
-      for (Buffer *b : list)
-        if (b->resident) {
-          b->row = base;
-          base += b->rows;
+      int64_t base = 0;
+      int64_t peak = place(list, base);
+      while (peak > capacity) {
+        Buffer *best = nullptr;
+        int64_t bestPeak = 0;
+        for (Buffer *b : list) {
+          if (!b->resident)
+            continue;
+          b->resident = false;
+          int64_t unusedBase;
+          const int64_t p = place(list, unusedBase);
+          b->resident = true;
+          if (!best || p < bestPeak ||
+              (p == bestPeak && b->def > best->def)) {
+            best = b;
+            bestPeak = p;
+          }
         }
-      SmallVector<Buffer *> transient;
-      for (Buffer *b : list)
-        if (!b->resident)
-          transient.push_back(b);
-      llvm::stable_sort(transient,
-          [](Buffer *a, Buffer *b) { return a->def < b->def; });
-      SmallVector<Buffer *> active;
-      int64_t peak = base;
-      for (Buffer *b : transient) {
-        llvm::erase_if(active, [&](Buffer *a) { return a->last < b->def; });
-        llvm::sort(active, [](Buffer *x, Buffer *y) { return x->row < y->row; });
-        int64_t row = base;
-        for (Buffer *a : active) {
-          if (a->row - row >= b->rows)
-            break;
-          row = std::max(row, a->row + a->rows);
-        }
-        b->row = row;
-        active.push_back(b);
-        peak = std::max(peak, row + b->rows);
+        if (!best)
+          break;
+        best->resident = false;
+        demoted[tile].push_back(best);
+        peak = place(list, base);
       }
       peakRows[tile] = peak;
+      residentRows[tile] = base;
       if (peak > capacity) {
         InFlightDiagnostic diag = f.emitError()
                                   << "SPM of tile " << tile << " overflows: "
@@ -343,10 +392,24 @@ struct SPMAllocationPass
         return failure();
       }
     }
+    for (auto &[tile, list] : demoted) {
+      int64_t rows = 0;
+      for (Buffer *b : list)
+        rows += b->rows;
+      // Not an MLIR diagnostic: the onnx-mlir driver does not show warnings.
+      llvm::errs() << "warning: @" << f.getName() << ": SPM of tile " << tile
+                   << " (" << capacity << " rows): " << list.size()
+                   << " constant buffer(s), " << rows
+                   << " rows, are uploaded on every call instead of once by "
+                      "the preload function\n";
+    }
 
     OpBuilder builder(f.getContext());
-    for (Buffer &b : buffers)
+    for (Buffer &b : buffers) {
       b.op.setRowAttr(builder.getI32IntegerAttr(static_cast<int32_t>(b.row)));
+      if (!b.resident && b.fill)
+        b.op.setResidentAttr(builder.getBoolAttr(false)); // demoted
+    }
 
     // ---- preload function ---------------------------------------------------
     SmallVector<Buffer *> hoisted;
@@ -422,7 +485,8 @@ struct SPMAllocationPass
           if (b->resident)
             os << "  resident";
           else
-            os << "  live " << b->def << ".." << b->last;
+            os << "  live " << b->def << ".." << b->last
+               << (b->fill ? "  (constant, uploaded per call)" : "");
           os << "\n";
         }
       }
@@ -435,6 +499,12 @@ struct SPMAllocationPass
 
 std::unique_ptr<Pass> createSPMAllocationPass() {
   return std::make_unique<SPMAllocationPass>();
+}
+
+std::unique_ptr<Pass> createSPMAllocationPass(
+    unsigned rowsPerTile, bool residentWeights, bool printMap) {
+  return std::make_unique<SPMAllocationPass>(
+      rowsPerTile, residentWeights, printMap);
 }
 
 } // namespace spade

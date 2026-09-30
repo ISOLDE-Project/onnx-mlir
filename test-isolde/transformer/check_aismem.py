@@ -33,6 +33,10 @@ import numpy as np
 
 ROW_BYTES = 64
 ROW_ELEMS = 16
+# SPM rows per tile the RTL addresses (tmp/cluster: TCDM_AW = 10 -> 256; a
+# row beyond aliases row - 256).  SPM_ROWS=512 in the environment for an RTL
+# with the whole 32 KiB window.
+SPM_ROWS = int(__import__("os").environ.get("SPM_ROWS", "256"))
 
 IGNORED = ("aismem.qconstant", "memref.dealloc", "krnl.entry_point",
            "onnx.EntryPoint", "func.return", "return")
@@ -116,6 +120,7 @@ class Machine:
         """Read; with `who`, check that no other buffer overwrote the rows."""
         bank = self.spm.setdefault(tile, {})
         start = addr // ROW_BYTES
+        self.check_rows(tile, start, count)
         if who is not None:
             for i in range(count):
                 o = self.owner.get((tile, start + i), who)
@@ -126,9 +131,16 @@ class Machine:
         return np.stack([bank.get(start + i, np.zeros(ROW_ELEMS, np.float16))
                          for i in range(count)])
 
+    def check_rows(self, tile, start, count):
+        if start + count > SPM_ROWS:
+            self.violations.append(
+                f"tile {tile}: rows [{start}, {start + count}) beyond the "
+                f"{SPM_ROWS} rows of the SPM")
+
     def store(self, tile, addr, matrix, who=None):
         bank = self.spm.setdefault(tile, {})
         start = addr // ROW_BYTES
+        self.check_rows(tile, start, matrix.size // ROW_ELEMS)
         for i, row in enumerate(matrix.reshape(-1, ROW_ELEMS)):
             bank[start + i] = row.astype(np.float16).copy()
             self.owner[(tile, start + i)] = who
@@ -314,7 +326,7 @@ def main():
         print("host operations left in the entry function:")
         print("\n".join("  " + x for x in unknown))
     for v in sorted(set(mach.violations)):
-        print("SPM overlap:", v)
+        print("SPM:", v)
     exact = True
     for y in outputs:
         y = y.reshape(ref["y_redmule"].shape)

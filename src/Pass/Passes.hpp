@@ -139,6 +139,11 @@ std::unique_ptr<mlir::Pass> createLowerToAISMEMPass();
 /// Assign SPM rows to aismem.SPMAlloc buffers; hoist resident weights into
 /// <function>_preload.
 std::unique_ptr<mlir::Pass> createSPMAllocationPass();
+/// SPM rows per RedMulE tile the allocator assumes by default: what the
+/// tmp/cluster RTL addresses (TCDM_AW = 10), not the 32 KiB window.
+constexpr unsigned kDefaultSPMRowsPerTile = 256;
+std::unique_ptr<mlir::Pass> createSPMAllocationPass(
+    unsigned rowsPerTile, bool residentWeights, bool printMap);
 
 std::unique_ptr<mlir::Pass> createLowerToLLVMIRPass();
 

@@ -234,8 +234,9 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
     pm.addPass(spade::createLowerToAISMEMPass());
     pm.addPass(mlir::createCanonicalizerPass());
     // SPM row management: place SPM-resident buffers, hoist resident weight
-    // uploads into <entry>_preload.
-    pm.addPass(spade::createSPMAllocationPass());
+    // uploads into <entry>_preload (--redmule-spm-rows rows per tile).
+    pm.addPass(spade::createSPMAllocationPass(onnx_mlir::redmuleSpmRows,
+        onnx_mlir::redmuleResidentWeights, onnx_mlir::redmulePrintSpmMap));
   }
 
   if (inputIRLevel <= onnx_mlir::LLVMLevel &&
