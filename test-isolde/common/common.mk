@@ -57,7 +57,7 @@ RISCV_WARNINGS += -Wunused-variable -Wall -Wextra -Wno-unused-command-line-argum
 DEBUG_DIALECT_CONVERSION ?= no
 
 ifeq ($(DEBUG_DIALECT_CONVERSION),yes)
-DIALECT_DEBUG := -debug-only=dialect-conversion,pattern-application
+DIALECT_DEBUG := dialect-conversion,pattern-application
 else
 DIALECT_DEBUG :=
 endif
@@ -89,7 +89,7 @@ endif
 onnx_debug_empty :=
 onnx_debug_space := $(onnx_debug_empty) $(onnx_debug_empty)
 onnx_debug_comma := ,
-onnx_debug_types = $(sort $(subst $(onnx_debug_comma), ,$(ONNX_DEBUG_ONLY)) $(if $(filter yes,$(DEBUG_DIALECT_CONVERSION)),dialect-conversion))
+onnx_debug_types = $(sort $(subst $(onnx_debug_comma), ,$(ONNX_DEBUG_ONLY)) $(if $(filter yes,$(DEBUG_DIALECT_CONVERSION)),$(DIALECT_DEBUG)))
 onnx_debug_trace_flags = $(if $(onnx_debug_types),--debug-only=$(subst $(onnx_debug_space),$(onnx_debug_comma),$(onnx_debug_types)),$(if $(filter yes,$(ONNX_DEBUG)),--debug))
 onnx_debug_ir_none :=
 onnx_debug_ir_before := --mlir-print-ir-before-all
@@ -185,7 +185,7 @@ libsim.a : startup.c.o
 
 .PHONY: graph
 ## Test complete lowering	         Layer  0 -> Layer -3 ->llvm
-graph: graph.test.onnx graph.test.aisle graph.test.aismem graph.test.aisllvmir graph.test.aisllvm print_config
+graph: print_config graph.test.onnx graph.test.aisle graph.test.aismem graph.test.aisllvmir graph.test.aisllvm 
 
 
 ## Emit ONNX IR                    Layer  0: ONNX Dialect
@@ -260,7 +260,7 @@ help-debug:
 	  'Optional settings (debugging is off by default):' \
 	  '  ONNX_DEBUG_ONLY=<types>       Exact DEBUG_TYPE names, comma-separated' \
 	  '  ONNX_DEBUG=yes               All LLVM debug categories if no types selected' \
-	  '  DEBUG_DIALECT_CONVERSION=yes Add dialect-conversion to the selected types' \
+	  '  DEBUG_DIALECT_CONVERSION=yes Add dialect-conversion,pattern-application to the selected types' \
 	  '  ONNX_IR_DUMP=<mode>          none | before | after | all | failure' \
 	  '  ONNX_IR_MODULE_SCOPE=yes     Print the whole module for requested IR dumps' \
 	  '  ONNX_DEBUG_LOG_DIR=<dir>     Write stderr to <dir>/<target>.log (overwrite)' \
