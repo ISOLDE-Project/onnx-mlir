@@ -409,6 +409,31 @@ def AISMEMSPMCopyOp: AISMEM_Op<"SPMCopy"> {
   let results = (outs NoneType:$none_val);
 }
 
+// Cross-tile transfer: a RedMulE instance only sees its own SPM, so a value
+// produced on one tile goes through data memory to reach another.
+def AISMEMSPMMoveTileOp: AISMEM_Op<"SPMMoveTile", [MemoryEffects<[MemWrite]>]> {
+  let summary = "Move `rows` SPM rows from one tile to another";
+  let description = [{
+    Reads rows x 16 fp16 at `source` in the SPM of `src_tile` and writes them
+    to `destination` in the SPM of `dst_tile` as dst_rows x 16, zero padded;
+    with `transpose` the 16 x rows transpose is written instead.  Lowered to
+    omrm_spm_move_f16 (SPM -> data-memory staging -> SPM).  The source tile
+    must be idle: its dependencies include the wait of the launch that
+    produced the source.
+  }];
+  let arguments = (ins
+    I32:$source,
+    I32:$destination,
+    Variadic<NoneType>:$dependencies,
+    I32Attr:$src_tile,
+    I32Attr:$dst_tile,
+    I32Attr:$rows,
+    I32Attr:$dst_rows,
+    DefaultValuedAttr<BoolAttr, "false">:$transpose
+  );
+  let results = (outs NoneType:$none_val);
+}
+
 // Initialize the persistent Y region in private SPM to zero.  This operation
 // is emitted only before phase 1.  Phase 2 intentionally omits it so that the
 // second GEMM accumulates into the phase-1 Y value.

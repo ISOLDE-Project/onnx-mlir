@@ -7,7 +7,7 @@
 // Shared by the AISLE -> AISMEM RedMulE lowerings (transformer blocks,
 // MatMul, Add): operand classification (SPM-resident or data memory) and a
 // thin emitter for aismem.SPMAlloc buffers and the scheduled RedMulE / SPM
-// operations on one tile.  Every launch is followed by its wait.
+// operations of a tile (see Emitter).
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,6 +22,7 @@
 #include "src/Dialect/AISMEM/AISMEMOps.hpp"
 #include "llvm/ADT/Twine.h"
 
+#include <cassert>
 #include <optional>
 #include <string>
 
@@ -34,7 +35,7 @@ using namespace mlir;
 constexpr int32_t kM = 12; // rows of X and Y (ARRAY_HEIGHT * PIPE_REGS)
 constexpr int32_t kN = 16; // reduction length, rows of W
 constexpr int32_t kK = 16; // columns of W and Y (one SPM row)
-constexpr int32_t kTile = 0; // single-tile chain
+constexpr int32_t kTile = 0; // default RedMulE instance
 
 // A host-side operand: statically shaped f16 memref viewed row-major as
 // [rows x cols], or a [rows x cols] window of it at (rowOff, colOff) (an
@@ -141,14 +142,26 @@ inline bool isConstant(Value source) {
 }
 
 // Thin emitter for SPM buffers and the scheduled RedMulE operations on one
-// tile.  Every launch is followed by its wait (single-tile chain).
+// tile (RedMulE instance `tile()`, kTile by default).  Every buffer it
+// allocates and every operation it emits carries that tile; `on(t)` gives an
+// emitter for another tile of the same block.  A RedMulE instance only sees
+// its own SPM: X, W and Y of a launch must be on the launching tile, and
+// `move()` brings an SPM value over from another tile.
+//
+// gemm() launches and waits at once (the single-tile chain); launch() and
+// wait() let independent launches on different tiles run concurrently.
 class Emitter {
 public:
-  Emitter(ConversionPatternRewriter &rewriter, Location loc, StringRef block)
-      : rewriter(rewriter), loc(loc), block(block.str()) {}
+  Emitter(ConversionPatternRewriter &rewriter, Location loc, StringRef block,
+      int32_t tile = kTile)
+      : rewriter(rewriter), loc(loc), block(block.str()), tile_(tile) {}
+
+  // The same block on RedMulE instance `t`.
+  Emitter on(int32_t t) const { return Emitter(rewriter, loc, block, t); }
+  int32_t tile() const { return tile_; }
 
   Value alloc(int64_t rows, const Twine &name, bool resident = false) {
-    SmallVector<NamedAttribute> attrs{attr("tile", kTile), attr("rows", rows),
+    SmallVector<NamedAttribute> attrs{attr("tile", tile_), attr("rows", rows),
         rewriter.getNamedAttr("resident", rewriter.getBoolAttr(resident)),
         rewriter.getNamedAttr(
             "name", rewriter.getStringAttr(block + "." + name.str()))};
@@ -181,7 +194,7 @@ public:
     Value address = alloc(dstRows, name, resident);
     SmallVector<Value> operands{source, address};
     operands.append(deps.begin(), deps.end());
-    SmallVector<NamedAttribute> attrs{attr("tile", kTile),
+    SmallVector<NamedAttribute> attrs{attr("tile", tile_),
         attr("row_offset", rowOff), attr("col_offset", colOff),
         attr("rows", rows), attr("cols", cols), attr("dst_rows", dstRows),
         attr("dst_cols", kK),
@@ -191,7 +204,7 @@ public:
     auto op = rewriter.create<AISMEMRedMulEUploadTileOp>(loc,
         TypeRange{rewriter.getI32Type(), rewriter.getNoneType()}, operands,
         attrs);
-    return {address, op.getNoneVal(), kTile};
+    return {address, op.getNoneVal(), tile_};
   }
 
   // A constant 16x16 weight tile: resident, uploaded once by the preload
@@ -218,17 +231,24 @@ public:
   // A 12-row SPM value as a W operand: copied into a zero-filled 16-row
   // buffer (rows 12..15 must be zero).
   SPMValue padded(const SPMValue &v, const Twine &name, ValueRange deps) {
+    if (v.tile != tile_) // the move pads to 16 rows itself
+      return move(v, kM, kN, name, /*transpose=*/false, deps);
     Value w = alloc(kN, name);
     SmallVector<Value> all(deps.begin(), deps.end());
     all.push_back(v.token);
     Value z = zero(w, kN, all);
-    return {w, copy(v.address, w, kM, z), kTile};
+    return {w, copy(v.address, w, kM, z), tile_};
   }
 
   // The 12x16 identity (ones on the diagonal) as a resident X operand, so
   // that Y = I . W + Y adds W's first 12 rows to Y.  One per function.
   Value identity() {
-    constexpr llvm::StringLiteral bufferName = "aismem.identity12x16";
+    const std::string bufferName =
+        tile_ == 0 ? std::string("aismem.identity12x16")
+                   : ("aismem.identity12x16.t" + Twine(tile_)).str();
+    const std::string globalName =
+        tile_ == 0 ? std::string("aismem_identity_12x16")
+                   : ("aismem_identity_12x16_t" + Twine(tile_)).str();
     Operation *parent = rewriter.getInsertionBlock()->getParentOp();
     AISMEMSPMAllocOp found;
     parent->walk([&](AISMEMSPMAllocOp a) {
@@ -250,13 +270,13 @@ public:
       }
     OperationState state(loc, "krnl.global");
     state.addAttribute("shape", rewriter.getI64ArrayAttr({kM, kN}));
-    state.addAttribute("name", rewriter.getStringAttr("aismem_identity_12x16"));
+    state.addAttribute("name", rewriter.getStringAttr(globalName));
     state.addAttribute("value", DenseElementsAttr::get(tensorType, values));
     state.addAttribute("alignment", rewriter.getI64IntegerAttr(16));
     state.addTypes(MemRefType::get({kM, kN}, f16));
     Value global = rewriter.create(state)->getResult(0);
 
-    SmallVector<NamedAttribute> attrs{attr("tile", kTile), attr("rows", kM),
+    SmallVector<NamedAttribute> attrs{attr("tile", tile_), attr("rows", kM),
         rewriter.getNamedAttr("resident", rewriter.getBoolAttr(true)),
         rewriter.getNamedAttr("name", rewriter.getStringAttr(bufferName))};
     Value address = rewriter
@@ -266,7 +286,7 @@ public:
                         .getAddress();
     Matrix m{global, kM, kN};
     SmallVector<Value> operands{m.memref, address};
-    SmallVector<NamedAttribute> uattrs{attr("tile", kTile),
+    SmallVector<NamedAttribute> uattrs{attr("tile", tile_),
         attr("row_offset", 0), attr("col_offset", 0), attr("rows", kM),
         attr("cols", kN), attr("dst_rows", kM), attr("dst_cols", kK),
         rewriter.getNamedAttr("transpose", rewriter.getBoolAttr(false)),
@@ -278,10 +298,11 @@ public:
     return address;
   }
 
-  // Block operand as an SPM buffer: as is, or uploaded from data memory.
+  // Block operand as an SPM buffer on this tile: as is, moved over from
+  // another tile, or uploaded from data memory.
   SPMValue activation(const Operand &o, const Twine &name) {
     if (o.spm)
-      return *o.spm;
+      return o.spm->tile == tile_ ? *o.spm : move(*o.spm, kM, kM, name);
     return upload(*o.host, 0, 0, kM, kN, kM, name, /*resident=*/false,
         ValueRange{});
   }
@@ -293,26 +314,61 @@ public:
         .create<AISMEMRedMulEZeroOp>(loc, TypeRange{rewriter.getNoneType()},
             operands,
             ArrayRef<NamedAttribute>{
-                attr("tile", kTile), attr("elements", rows * kK)})
+                attr("tile", tile_), attr("elements", rows * kK)})
+        .getNoneVal();
+  }
+
+  // Launch Y (+)= X . W on this tile; the result is valid after a wait()
+  // on the returned launch token.
+  Value launch(Value x, Value w, Value y, ValueRange deps) {
+    SmallVector<Value> operands{x, w, y};
+    operands.append(deps.begin(), deps.end());
+    return rewriter
+        .create<AISMEMRedMulEGEMMOp>(loc, TypeRange{rewriter.getNoneType()},
+            operands,
+            ArrayRef<NamedAttribute>{attr("tile", tile_), attr("k", kK),
+                attr("m", kM), attr("n", kN)})
+        .getNoneVal();
+  }
+
+  // One barrier for launches on any tiles (mask = their tiles).
+  Value wait(ValueRange launched) {
+    int64_t mask = 0;
+    for (Value t : launched)
+      if (auto gemm = t.getDefiningOp<AISMEMRedMulEGEMMOp>())
+        mask |= int64_t(1) << gemm.getTile();
+    assert(mask != 0 && "wait() needs RedMulEGEMM launch tokens");
+    return rewriter
+        .create<AISMEMRedMulEWaitOp>(loc, TypeRange{rewriter.getNoneType()},
+            launched, ArrayRef<NamedAttribute>{attr("mask", mask)})
         .getNoneVal();
   }
 
   // Launch Y (+)= X . W and wait for it.
   Value gemm(Value x, Value w, Value y, ValueRange deps) {
-    SmallVector<Value> operands{x, w, y};
+    return wait(ValueRange{launch(x, w, y, deps)});
+  }
+
+  // An SPM value of another tile, rows x 16, brought to a fresh buffer of
+  // dstRows rows on this tile (zero padded; transposed on request, then the
+  // result has 16 rows of `rows` columns).  Goes through data memory: the
+  // tiles have no SPM-to-SPM path.  The source tile must be idle.
+  SPMValue move(const SPMValue &v, int64_t rows, int64_t dstRows,
+      const Twine &name, bool transpose = false, ValueRange deps = {}) {
+    Value dst = alloc(dstRows, name);
+    SmallVector<Value> operands{v.address, dst};
     operands.append(deps.begin(), deps.end());
-    Value launched =
-        rewriter
-            .create<AISMEMRedMulEGEMMOp>(loc,
-                TypeRange{rewriter.getNoneType()}, operands,
-                ArrayRef<NamedAttribute>{attr("tile", kTile), attr("k", kK),
-                    attr("m", kM), attr("n", kN)})
-            .getNoneVal();
-    return rewriter
-        .create<AISMEMRedMulEWaitOp>(loc, TypeRange{rewriter.getNoneType()},
-            ValueRange{launched},
-            ArrayRef<NamedAttribute>{attr("mask", 1 << kTile)})
-        .getNoneVal();
+    operands.push_back(v.token);
+    Value t = rewriter
+                  .create<AISMEMSPMMoveTileOp>(loc,
+                      TypeRange{rewriter.getNoneType()}, operands,
+                      ArrayRef<NamedAttribute>{attr("src_tile", v.tile),
+                          attr("dst_tile", tile_), attr("rows", rows),
+                          attr("dst_rows", dstRows),
+                          rewriter.getNamedAttr(
+                              "transpose", rewriter.getBoolAttr(transpose))})
+                  .getNoneVal();
+    return {dst, t, tile_};
   }
 
   Value relu(Value address, int64_t rows, ValueRange deps) {
@@ -321,7 +377,7 @@ public:
     return rewriter
         .create<AISMEMSPMReluOp>(loc, TypeRange{rewriter.getNoneType()},
             operands,
-            ArrayRef<NamedAttribute>{attr("tile", kTile), attr("rows", rows)})
+            ArrayRef<NamedAttribute>{attr("tile", tile_), attr("rows", rows)})
         .getNoneVal();
   }
 
@@ -332,7 +388,7 @@ public:
     return rewriter
         .create<AISMEMSPMTransposeOp>(loc, TypeRange{rewriter.getNoneType()},
             operands,
-            ArrayRef<NamedAttribute>{attr("tile", kTile), attr("rows", rows),
+            ArrayRef<NamedAttribute>{attr("tile", tile_), attr("rows", rows),
                 attr("dst_rows", dstRows)})
         .getNoneVal();
   }
@@ -343,7 +399,7 @@ public:
     return rewriter
         .create<AISMEMSPMCopyOp>(loc, TypeRange{rewriter.getNoneType()},
             operands,
-            ArrayRef<NamedAttribute>{attr("tile", kTile), attr("rows", rows)})
+            ArrayRef<NamedAttribute>{attr("tile", tile_), attr("rows", rows)})
         .getNoneVal();
   }
 
@@ -353,16 +409,16 @@ public:
       ValueRange deps) {
     if (!c) {
       Value y = alloc(kM, "Y");
-      return {y, zero(y, kM, deps), kTile};
+      return {y, zero(y, kM, deps), tile_};
     }
-    if (c->host) // upload() already makes a private copy
+    if (c->host || c->spm->tile != tile_) // uploaded / moved: private copy
       return activation(*c, "Y");
     if (cIsDead) // residual in place
       return *c->spm;
     Value y = alloc(kM, "Y");
     SmallVector<Value> all(deps.begin(), deps.end());
     all.push_back(c->spm->token);
-    return {y, copy(c->spm->address, y, kM, all), kTile};
+    return {y, copy(c->spm->address, y, kM, all), tile_};
   }
 
   // Does this upload copy whole 16-element rows of a row-major [.. x 16]
@@ -435,6 +491,7 @@ private:
   ConversionPatternRewriter &rewriter;
   Location loc;
   std::string block;
+  int32_t tile_;
 };
 
 // All users of `value` are `op` itself: the value may be overwritten by op.

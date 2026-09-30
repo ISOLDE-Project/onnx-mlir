@@ -213,6 +213,18 @@ class Machine:
             self.store(t, self.get(ops[1]), dst, b[1])
             self.core_spm += (n + dn) * ROW_ELEMS
             self.values[res[0]] = None
+        elif op == "aismem.SPMMoveTile":
+            # tile -> data memory -> tile (omrm_spm_move_f16)
+            n, dn = a["rows"], a["dst_rows"]
+            src = self.rows(a["src_tile"], self.get(ops[0]), n, b[0])
+            if a.get("transpose"):
+                src = src.T
+            dst = np.zeros((dn, ROW_ELEMS), np.float16)
+            dst[:src.shape[0], :src.shape[1]] = src
+            self.store(a["dst_tile"], self.get(ops[1]), dst, b[1])
+            self.downloaded += n * ROW_ELEMS
+            self.uploaded += dn * ROW_ELEMS
+            self.values[res[0]] = None
         elif op == "aismem.SPMCopy":
             t, n = a["tile"], a["rows"]
             self.store(t, self.get(ops[1]),

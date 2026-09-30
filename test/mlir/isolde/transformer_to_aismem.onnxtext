@@ -2,9 +2,11 @@
 
 // End to end: com.isolde encoder layer (scales already folded, weights as
 // graph inputs, so they are streamed per call rather than resident) ->
-// onnx -> aisle -> aismem RedMulE schedule with SPM-resident activations on
-// one tile.  The layer input is uploaded once, the output downloaded once;
-// everything in between stays in SPM.
+// onnx -> aisle -> aismem RedMulE schedule with SPM-resident activations.
+// Attention's Q, K and V run on the three RedMulE tiles at once; everything
+// else on tile 0.  The layer input is uploaded once per tile that reads it,
+// the output downloaded once; in between, data stays in SPM except K and V,
+// which reach tile 0 through data memory (SPMMoveTile).
 <
 ir_version: 9,
 opset_import: [ "" : 18, "com.isolde" : 1 ]
@@ -58,25 +60,35 @@ PositionwiseFeedForward (X, W1, W2) => (Y) {
 
 // CHECK-LABEL: func.func @main_graph
 // CHECK-SAME:    ([[H:%.+]]: memref<1x12x16xf16>
-// CHECK-SAME:    aismem.spm_rows_used = {tile0 =
+// CHECK-SAME:    aismem.spm_rows_used = {tile0 = {{[0-9]+}} : i64, tile1 = {{[0-9]+}} : i64, tile2 = {{[0-9]+}} : i64}
 
-// MultiHeadAttention: h is uploaded once and is also the residual accumulator.
-// CHECK:     [[X:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Xq", resident = false, row = [[XR:[0-9]+]]
-// CHECK:     "aismem.RedMulEUploadTile"([[H]], [[X]]
-// CHECK:     [[Q:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Q"
-// CHECK:     "aismem.RedMulEGEMM"([[X]], {{%.+}}, [[Q]],
-// CHECK-NEXT: "aismem.RedMulEWait"({{.*}}) <{mask = 1 : i32}>
-// CHECK:     [[K:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}K", {{.*}}rows = 12
-// V goes straight into a zero-filled 16-row buffer: it is already pad16(V).
-// CHECK:     [[V:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}V|0", {{.*}}rows = 16
-// CHECK-NEXT: "aismem.RedMulEZero"([[V]], {{.*}}) <{elements = 256 : i32
-// CHECK:     [[KT:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}K^T|0", {{.*}}rows = 16
-// CHECK-NEXT: "aismem.SPMTranspose"([[K]], [[KT]], {{.*}}) <{dst_rows = 16 : i32, rows = 12 : i32
+// MultiHeadAttention: h is uploaded to each of the three tiles; on tile 0 it
+// is also the residual accumulator.
+// CHECK:     [[X:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Xq", resident = false, row = [[XR:[0-9]+]] : i32, rows = 12 : i32, tile = 0
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[H]], [[X]]
+// CHECK:     [[X1:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Xkv.t1", {{.*}}tile = 1
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[H]], [[X1]]
+// CHECK:     [[X2:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Xkv.t2", {{.*}}tile = 2
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[H]], [[X2]]
+// Q, K and V launched on tiles 0, 1, 2, then one wait for all three.
+// CHECK:     [[Q:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Q", {{.*}}tile = 0
+// CHECK:     [[LQ:%.+]] = "aismem.RedMulEGEMM"([[X]], {{%.+}}, [[Q]], {{.*}}tile = 0
+// CHECK:     [[K:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}K", {{.*}}rows = 12 : i32, tile = 1
+// CHECK:     [[LK:%.+]] = "aismem.RedMulEGEMM"([[X1]], {{%.+}}, [[K]], {{.*}}tile = 1
+// CHECK:     [[V:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}V", {{.*}}rows = 12 : i32, tile = 2
+// CHECK:     [[LV:%.+]] = "aismem.RedMulEGEMM"([[X2]], {{%.+}}, [[V]], {{.*}}tile = 2
+// CHECK-NEXT: [[T:%.+]] = "aismem.RedMulEWait"([[LQ]], [[LK]], [[LV]]) <{mask = 7 : i32}>
+// K^T (transposed on the way) and V reach tile 0 zero padded to 16 rows.
+// CHECK:     [[KT:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}K^T|0", {{.*}}rows = 16 : i32, tile = 0
+// CHECK-NEXT: "aismem.SPMMoveTile"([[K]], [[KT]], [[T]]) <{dst_rows = 16 : i32, dst_tile = 0 : i32, rows = 12 : i32, src_tile = 1 : i32, transpose = true}>
+// CHECK:     [[VW:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}V|0", {{.*}}rows = 16 : i32, tile = 0
+// CHECK-NEXT: "aismem.SPMMoveTile"([[V]], [[VW]], [[T]]) <{dst_rows = 16 : i32, dst_tile = 0 : i32, rows = 12 : i32, src_tile = 2 : i32, transpose = false}>
+// CHECK-NOT: "aismem.SPMTranspose"
 // CHECK:     [[S:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}S"
 // CHECK:     "aismem.RedMulEGEMM"([[Q]], [[KT]], [[S]],
 // CHECK:     "aismem.SPMRelu"([[S]],
 // CHECK:     [[O:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}O"
-// CHECK:     "aismem.RedMulEGEMM"([[S]], [[V]], [[O]],
+// CHECK:     "aismem.RedMulEGEMM"([[S]], [[VW]], [[O]],
 // Residual in place: Y = O . Wo + h accumulates into h's own rows.
 // CHECK:     "aismem.RedMulEGEMM"([[O]], {{%.+}}, [[X]],
 
@@ -91,7 +103,7 @@ PositionwiseFeedForward (X, W1, W2) => (Y) {
 // CHECK:     "aismem.RedMulEGEMM"({{%.+}}, {{%.+}}, [[X]],
 // CHECK:     "aismem.RedMulEGEMM"({{%.+}}, {{%.+}}, [[X]],
 // CHECK:     "aismem.RedMulEWait"
-// The only transfer back to data memory:
+// The only download (besides the two moves):
 // CHECK:     "aismem.RedMulEDownload"([[X]],
 // CHECK-NOT: "aismem.RedMulE
 // CHECK:     return

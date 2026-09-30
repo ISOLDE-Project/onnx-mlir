@@ -125,15 +125,27 @@ differs from it by at most 1.2e-3.
 
 ## SPM-resident activations and SPM row management
 
-The RedMulE schedules keep every intermediate in the tile-private SPM
-(single-tile chain on tile 0): a GEMM's Y buffer is the X or W operand of the
-next one, V is written into a zero-filled 16-row buffer (already `pad16(V)`),
-the residual accumulates into the block input's own rows (`h = O Wo + h`),
-and ReLU / `K^T` run in place in SPM (`aismem.SPMRelu`,
-`aismem.SPMTranspose`, `aismem.SPMCopy`; `omrm_spm_*_f16` on the core
-today, loader modes later).  Data memory is touched only where a block's
-input or result meets something that is not a RedMulE block (download is
-materialized by `convert-aisle-to-aismem`).
+The RedMulE schedules keep every intermediate in the tile-private SPMs: a
+GEMM's Y buffer is the X or W operand of the next one on the same tile, the
+residual accumulates into the block input's own rows (`h = O Wo + h`), and
+ReLU runs in place in SPM (`aismem.SPMRelu`, `aismem.SPMCopy`;
+`omrm_spm_*_f16` on the core today, loader modes later).  Data memory is
+touched only where a block's input or result meets something that is not a
+RedMulE block (download is materialized by `convert-aisle-to-aismem`), and
+where a value moves between tiles.
+
+Multi-tile schedules.  The emitter (`SPMEmitter.hpp`) is bound to one RedMulE
+instance and tags every buffer and operation with it; `emit.on(t)` targets
+another tile.  `launch()` starts a GEMM without waiting and `wait()` retires
+any set of launches with one `aismem.RedMulEWait` (mask = their tiles), so
+independent launches on different tiles overlap; `gemm()` is launch + wait.
+A RedMulE instance only reads its own SPM, and the tiles have no SPM-to-SPM
+path: `emit.move()` emits `aismem.SPMMoveTile` (runtime `omrm_spm_move_f16`:
+download from the source tile, upload to the destination, optionally
+transposed, zero padded).  MultiHeadAttention uses it: Q, K and V run on
+tiles 0, 1 and 2 behind one wait (mask 0x7), then K^T (transposed on the way,
+replacing `SPMTranspose`) and V (padded to 16 rows) move to tile 0 for
+S = ReLU(Q K^T), O = S V and Y = O Wo + h.
 
 Buffers are `aismem.SPMAlloc` ops (`tile`, `rows`, `name`, `resident`).  The
 `aismem-spm-allocate` pass (in the spade pipeline right after
@@ -149,10 +161,10 @@ Buffers are `aismem.SPMAlloc` ops (`tile`, `rows`, `name`, `resident`).  The
   `resident-weights` (default true), `print-map`.  Overflow is an error that
   lists every buffer.  The function gets `aismem.spm_rows_used`.
 
-Per encoder layer (radar model) this moves 0 values between data memory and
-SPM, against 7,680 in the download/upload schedule; the core touches 1,216
-values inside SPM (K^T, ReLU S, ReLU U).  Two layers use 388 of 512 rows of
-tile 0 including the resident weights.
+Per encoder layer (radar model), with attention on three tiles, this moves
+1,088 values into SPM and 576 out (the layer input to three tiles, K and V
+through data memory, the result), against 7,680 in the download/upload
+schedule; the core touches 768 values inside SPM (ReLU S, ReLU U).
 
 Test: `test-isolde/transformer` (`make golden check BLOCK=layer|mha|ffn`) and
 `test/mlir/isolde/*.mlir`.

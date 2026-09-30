@@ -86,7 +86,7 @@ OpFoldResult AISLEWindowOp::fold(FoldAdaptor) {
   }
   // Exactly one piece of a Concat.
   if (auto concat = getInput().getDefiningOp<AISLEConcatOp>()) {
-    const int64_t axis = concat.getAxis();
+    const int64_t axis = concat.getAxisAttr().getInt();
     int64_t start = 0;
     for (Value piece : concat.getInputs()) {
       if (piece.getType() == out && offsets[axis] == start &&
@@ -106,7 +106,7 @@ LogicalResult AISLEConcatOp::verify() {
   auto out = dyn_cast<RankedTensorType>(getOutput().getType());
   if (!out || !out.hasStaticShape())
     return emitOpError("needs a statically shaped result");
-  const int64_t axis = getAxis();
+  const int64_t axis = getAxisAttr().getInt();
   if (axis < 0 || axis >= out.getRank())
     return emitOpError() << "axis " << axis << " is out of range";
   int64_t total = 0;

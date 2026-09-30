@@ -85,8 +85,11 @@ inline std::optional<llvm::SmallVector<SPMValue>> getSPMTiles(
   auto cast = value.getDefiningOp<mlir::UnrealizedConversionCastOp>();
   if (!cast)
     return std::nullopt;
-  auto ids = cast->getAttrOfType<mlir::DenseI32ArrayAttr>(kSPMTilesAttr);
-  if (!ids || cast.getInputs().size() != 2 * ids.size())
+  auto idsAttr = cast->getAttrOfType<mlir::DenseI32ArrayAttr>(kSPMTilesAttr);
+  if (!idsAttr)
+    return std::nullopt;
+  llvm::ArrayRef<int32_t> ids = idsAttr.asArrayRef();
+  if (cast.getInputs().size() != 2 * ids.size())
     return std::nullopt;
   llvm::SmallVector<SPMValue> tiles;
   for (size_t j = 0; j < ids.size(); ++j)

@@ -11,23 +11,24 @@
 //
 //     Y[12x16] (+)= X[12x16] . W[16x16]        (K=16, M=12, N=16)
 //
-// and all buffers are aismem.SPMAlloc row ranges on one tile (single-tile
-// chain: no cross-tile traffic).  A GEMM's Y buffer is used directly as the X
-// or W operand of the next GEMM; nothing goes back to data memory between
-// blocks.  The `aismem-spm-allocate` pass later assigns the rows from buffer
+// and all buffers are aismem.SPMAlloc row ranges in the tile-private SPMs.
+// A GEMM's Y buffer is used directly as the X or W operand of the next GEMM
+// on the same tile; nothing goes back to data memory between blocks.  The `aismem-spm-allocate` pass later assigns the rows from buffer
 // lifetimes and hoists the weight uploads into `<entry>_preload`.
 //
-//   MultiHeadAttention (self-attention, one head, L = 12, d = 16)
-//     Q = h Wq                        12 rows
-//     K = h Wk                        12 rows
-//     V = h Wv    into 16 rows whose last 4 are zero  -> already pad16(V)
-//     Kt = pad16(K^T)                 SPMTranspose (core)
-//     S = Q Kt ; S = ReLU(S)          SPMRelu, in place (core)
-//     O = S V
-//     Y = O Wo + h                    residual: Y *is* h's buffer when h has
-//                                     no other user (in place, no copy)
+//   MultiHeadAttention (self-attention, one head, L = 12, d = 16), on the
+//   three RedMulE instances:
+//     Q = h Wq    tile 0  \
+//     K = h Wk    tile 1   } launched together, one wait (mask 0x7);
+//     V = h Wv    tile 2  /  h is uploaded (or moved) to each tile
+//     Kt = pad16(K^T)                 SPMMoveTile tile 1 -> 0, transposing
+//     V  = pad16(V)                   SPMMoveTile tile 2 -> 0
+//     S = Q Kt ; S = ReLU(S)          tile 0; SPMRelu in place (core)
+//     O = S V                         tile 0
+//     Y = O Wo + h                    tile 0; residual: Y *is* h's buffer
+//                                     when h has no other user (in place)
 //
-//   PositionwiseFeedForward (d = 16, d_ff = 16 T)
+//   PositionwiseFeedForward (d = 16, d_ff = 16 T), on tile 0
 //     U_j = X W1[:, 16j:16j+16] ; U_j = ReLU(U_j)        j < T
 //     Y = X + sum_j U_j W2[16j:16j+16, :]                 Y accumulates
 //
@@ -123,50 +124,64 @@ struct AISLEMultiHeadAttentionOpLowering : public ConversionPattern {
       c = *co;
     }
 
-    Emitter emit(rewriter, loc, blockName(op, "mha"));
-    Value Wq = emit.weight(*wq->host, 0, 0, "Wq");
-    Value Wk = emit.weight(*wk->host, 0, 0, "Wk");
-    Value Wv = emit.weight(*wv->host, 0, 0, "Wv");
-    Value Wo = emit.weight(*wo->host, 0, 0, "Wo");
+    // Q, K and V are independent: one RedMulE instance each, launched
+    // together.  Everything after them runs on tile 0 (Q's tile).
+    Emitter e0(rewriter, loc, blockName(op, "mha"), /*tile=*/0);
+    Emitter e1 = e0.on(1);
+    Emitter e2 = e0.on(2);
+    Value Wq = e0.weight(*wq->host, 0, 0, "Wq");
+    Value Wk = e1.weight(*wk->host, 0, 0, "Wk");
+    Value Wv = e2.weight(*wv->host, 0, 0, "Wv");
+    Value Wo = e0.weight(*wo->host, 0, 0, "Wo");
 
-    SPMValue h = emit.activation(*xq, "Xq");
-    SPMValue hkv = oldOp.getXkv() == oldOp.getXq()
-                       ? h
-                       : emit.activation(*xkv, "Xkv");
+    // The block input on every tile that reads it (uploaded, or moved from
+    // the tile it was produced on).
+    const Operand &kvIn = oldOp.getXkv() == oldOp.getXq() ? *xq : *xkv;
+    SPMValue h = e0.activation(*xq, "Xq");
+    SPMValue hk = e1.activation(kvIn, "Xkv.t1");
+    SPMValue hv = e2.activation(kvIn, "Xkv.t2");
 
-    // Q, K and V; V lands in a 16-row buffer whose rows 12..15 stay zero, so
-    // it is already the padded W operand of O = S V.
-    Value q = emit.alloc(kM, "Q");
-    Value t = emit.gemm(h.address, Wq, q,
-        ValueRange{emit.zero(q, kM, ValueRange{h.token})});
-    Value k = emit.alloc(kM, "K");
-    t = emit.gemm(hkv.address, Wk, k,
-        ValueRange{emit.zero(k, kM, ValueRange{t, hkv.token})});
-    Value v = emit.alloc(kN, "V|0");
-    t = emit.gemm(hkv.address, Wv, v, ValueRange{emit.zero(v, kN, t)});
+    // Q (tile 0), K (tile 1), V (tile 2), then one wait for all three.
+    Value q = e0.alloc(kM, "Q");
+    Value lq = e0.launch(
+        h.address, Wq, q, ValueRange{e0.zero(q, kM, ValueRange{h.token})});
+    Value k = e1.alloc(kM, "K");
+    Value lk = e1.launch(
+        hk.address, Wk, k, ValueRange{e1.zero(k, kM, ValueRange{hk.token})});
+    Value v = e2.alloc(kM, "V");
+    Value lv = e2.launch(
+        hv.address, Wv, v, ValueRange{e2.zero(v, kM, ValueRange{hv.token})});
+    Value t = e0.wait(ValueRange{lq, lk, lv});
+
+    // K and V to tile 0 through data memory.  The move writes Kt =
+    // pad16(K^T) directly (transposing, zero padded to 16 rows), and V into
+    // 16 rows whose last 4 are zero: already pad16(V), the W of O = S V.
+    SPMValue kt = e0.move({k, t, e1.tile()}, kM, kN, "K^T|0",
+        /*transpose=*/true);
+    SPMValue vw = e0.move({v, t, e2.tile()}, kM, kN, "V|0");
 
     // S = ReLU(Q . pad16(K^T)).  Columns L..15 of S are zero because K^T is
     // zero padded, so the padded rows of V never contribute.
-    Value kt = emit.alloc(kN, "K^T|0");
-    t = emit.transpose(k, kt, kM, kN, t);
-    Value s = emit.alloc(kM, "S");
-    t = emit.gemm(q, kt, s, ValueRange{emit.zero(s, kM, t)});
-    t = emit.relu(s, kM, t);
+    Value s = e0.alloc(kM, "S");
+    t = e0.gemm(q, kt.address, s,
+        ValueRange{e0.zero(s, kM, ValueRange{t, kt.token})});
+    t = e0.relu(s, kM, t);
 
     // O = S . V
-    Value o = emit.alloc(kM, "O");
-    t = emit.gemm(s, v, o, ValueRange{emit.zero(o, kM, t)});
+    Value o = e0.alloc(kM, "O");
+    t = e0.gemm(s, vw.address, o,
+        ValueRange{e0.zero(o, kM, ValueRange{t, vw.token})});
 
     // Y = O . Wo + C: the residual is the accumulator, in place when C has
     // no other user.
     const bool cDead = oldOp.getC() && onlyUsedBy(oldOp.getC(), op);
     SPMValue y = (c && c->host && cDead && oldOp.getC() == oldOp.getXq())
                      ? h // C is the block input we already uploaded
-                     : emit.accumulator(c, cDead, t);
-    t = emit.gemm(o, Wo, y.address, ValueRange{t, y.token});
+                     : e0.accumulator(c, cDead, t);
+    t = e0.gemm(o, Wo, y.address, ValueRange{t, y.token});
 
     rewriter.replaceOp(op, makeSPMTensor(rewriter, loc,
-                               oldOp.getY().getType(), {y.address, t, kTile}));
+                               oldOp.getY().getType(), {y.address, t, y.tile}));
     return success();
   }
 };
@@ -251,7 +266,7 @@ struct AISLEPositionwiseFeedForwardOpLowering : public ConversionPattern {
                  : emit.gemm(u[j], w2Tiles[j], y.address, ValueRange{t});
 
     rewriter.replaceOp(op, makeSPMTensor(rewriter, loc,
-                               oldOp.getY().getType(), {y.address, t, kTile}));
+                               oldOp.getY().getType(), {y.address, t, y.tile}));
     return success();
   }
 };

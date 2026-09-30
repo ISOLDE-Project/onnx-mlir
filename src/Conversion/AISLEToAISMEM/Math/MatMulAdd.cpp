@@ -145,7 +145,7 @@ LogicalResult lowerNativeProduct(Operation *op, Value aValue, Value bValue,
     deps.push_back(x.token);
   Value t = emit.gemm(x.address, w, y.address, deps);
   rewriter.replaceOp(op,
-      makeSPMTensor(rewriter, op->getLoc(), resultType, {y.address, t, kTile}));
+      makeSPMTensor(rewriter, op->getLoc(), resultType, {y.address, t, y.tile}));
   return success();
 }
 
@@ -247,7 +247,7 @@ struct AISLEConcatOpLowering : public ConversionPattern {
       ConversionPatternRewriter &rewriter) const final {
     auto concat = cast<AISLEConcatOp>(op);
     auto outType = cast<RankedTensorType>(concat.getOutput().getType());
-    if (concat.getAxis() != outType.getRank() - 1)
+    if (concat.getAxisAttr().getInt() != outType.getRank() - 1)
       return op->emitError("only a Concat of RedMulE tiles along the last "
                            "axis is supported");
     SmallVector<SPMValue> tiles;
@@ -311,20 +311,21 @@ struct AISLEAddOpLowering : public ConversionPattern {
 
     // Y: in place when allowed, else a private copy.
     SPMValue y;
-    if (yOp.spm && mayOverwrite(yOrig, op) && origA != origB) {
+    if (yOp.spm && yOp.spm->tile == emit.tile() && mayOverwrite(yOrig, op) &&
+        origA != origB) {
       y = *yOp.spm;
-    } else if (yOp.host) {
-      y = emit.activation(yOp, "Y");
+    } else if (yOp.host || yOp.spm->tile != emit.tile()) {
+      y = emit.activation(yOp, "Y"); // uploaded or moved: a private copy
     } else {
       Value copyTo = emit.alloc(kM, "Y");
       y = {copyTo, emit.copy(yOp.spm->address, copyTo, kM, yOp.spm->token),
-          kTile};
+          emit.tile()};
     }
     deps.push_back(y.token);
 
     Value t = emit.gemm(identity, w, y.address, deps);
     rewriter.replaceOp(op, makeSPMTensor(rewriter, op->getLoc(),
-                               oldOp.getC().getType(), {y.address, t, kTile}));
+                               oldOp.getC().getType(), {y.address, t, y.tile}));
     return success();
   }
 };

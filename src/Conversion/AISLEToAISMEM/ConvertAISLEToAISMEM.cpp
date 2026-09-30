@@ -73,7 +73,7 @@ struct AISLEToAISMEMLoweringPass
   // constructor to make sure that the options are initialized properly.
   AISLEToAISMEMLoweringPass() = default;
 
-  void runOnOperation();
+  void runOnOperation() final;
 
 public:
 };

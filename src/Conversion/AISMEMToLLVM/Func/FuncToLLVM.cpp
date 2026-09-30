@@ -267,7 +267,7 @@ static void wrapExternalFunction(OpBuilder &builder, Location loc,
 
 /// Modifies the body of the function to construct the `MemRefDescriptor` from
 /// the bare pointer calling convention lowering of `memref` types.
-static void modifyFuncOpToUseBarePtrCallingConv(
+[[maybe_unused]] static void modifyFuncOpToUseBarePtrCallingConv(
     ConversionPatternRewriter &rewriter, Location loc,
     const LLVMTypeConverter &typeConverter, LLVM::LLVMFuncOp funcOp,
     TypeRange oldArgTypes) {

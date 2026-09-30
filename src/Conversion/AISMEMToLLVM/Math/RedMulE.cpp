@@ -28,6 +28,7 @@ constexpr StringLiteral uploadTileFunc = "omrm_upload_tile_f16";
 constexpr StringLiteral spmReluFunc = "omrm_spm_relu_f16";
 constexpr StringLiteral spmTransposeFunc = "omrm_spm_transpose_f16";
 constexpr StringLiteral spmCopyFunc = "omrm_spm_copy_f16";
+constexpr StringLiteral spmMoveFunc = "omrm_spm_move_f16";
 constexpr int64_t spmRowBytes = 64; // get_addr_start(row) = row << 6
 constexpr StringLiteral zeroFunc = "omrm_zero_f16";
 constexpr StringLiteral gemm16x12x16Func = "omrm_gemm_f16_16_12_16";
@@ -282,6 +283,34 @@ public:
   }
 };
 
+// omrm_spm_move_f16(src_tile, src_addr, dst_tile, dst_addr, rows,
+//                   dst_rows, flags)   flags: OMRM_TILE_TRANSPOSE
+class SPMMoveTileLowering final : public ConvertToLLVMPattern {
+public:
+  SPMMoveTileLowering(LLVMTypeConverter &converter, MLIRContext *context)
+      : ConvertToLLVMPattern(spade::AISMEMSPMMoveTileOp::getOperationName(),
+            context, converter) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const override {
+    auto move = cast<spade::AISMEMSPMMoveTileOp>(op);
+    Location loc = op->getLoc();
+    Type i32 = rewriter.getI32Type();
+    Type voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
+    auto function = getOrInsertFunction(op, rewriter, spmMoveFunc, voidType,
+        {i32, i32, i32, i32, i32, i32, i32});
+    rewriter.create<LLVM::CallOp>(loc, function,
+        ValueRange{i32Constant(rewriter, loc, move.getSrcTile()), operands[0],
+            i32Constant(rewriter, loc, move.getDstTile()), operands[1],
+            i32Constant(rewriter, loc, move.getRows()),
+            i32Constant(rewriter, loc, move.getDstRows()),
+            i32Constant(rewriter, loc,
+                move.getTranspose() ? tileFlagTranspose : 0)});
+    rewriter.replaceOp(op, completedToken(rewriter, loc));
+    return success();
+  }
+};
+
 class RedMulEZeroLowering final : public ConvertToLLVMPattern {
 public:
   RedMulEZeroLowering(LLVMTypeConverter &converter, MLIRContext *context)
@@ -448,7 +477,7 @@ void populateLoweringAISMEMRedMulEOpPatterns(LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns, MLIRContext *ctx) {
   patterns.insert<RedMulEAddrStartLowering, RedMulEUploadLowering,
       RedMulEUploadTileLowering, SPMAllocLowering, SPMReluLowering,
-      SPMTransposeLowering, SPMCopyLowering,
+      SPMTransposeLowering, SPMCopyLowering, SPMMoveTileLowering,
       RedMulEZeroLowering, RedMulEGEMMLowering, RedMulEWaitLowering,
       RedMulEDownloadLowering>(typeConverter, ctx);
 }

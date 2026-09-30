@@ -12,18 +12,23 @@ make graph  BLOCK=mha        # all SPADE emission levels (common.mk)
 
 `BLOCK` is one of
 
-| BLOCK | graph | RedMulE launches | DMEM<->SPM per call | resident |
+| BLOCK | graph | RedMulE launches (waits) | DMEM<->SPM per call | resident |
 |---|---|---|---|---|
-| `mha`   | `h + MultiHeadAttention(h, h)` | 6 | 192 up, 192 down | 1,024 |
-| `ffn`   | `h + PositionwiseFeedForward(h)` (d_ff = `D_FF`, default 48) | 6 | 192 up, 192 down | 1,536 |
-| `layer` | `EncoderLayer` = both, residuals included | 12 | 192 up, 192 down | 2,560 |
-| `proj`  | `MatMul([1,12,32], [32,16]) + P` (input embedding + positional encoding) | 3 | 384 up, 192 down | 960 |
-| `proj_layer` | `proj` followed by `EncoderLayer` | 15 | 384 up, 192 down | 3,520 |
+| `mha`   | `h + MultiHeadAttention(h, h)` | 6 (4) | 1,088 up, 576 down | 1,024 |
+| `ffn`   | `h + PositionwiseFeedForward(h)` (d_ff = `D_FF`, default 48) | 6 (6) | 192 up, 192 down | 1,536 |
+| `layer` | `EncoderLayer` = both, residuals included | 12 (10) | 1,088 up, 576 down | 2,560 |
+| `proj`  | `MatMul([1,12,32], [32,16]) + P` (input embedding + positional encoding) | 3 (3) | 384 up, 192 down | 960 |
+| `proj_layer` | `proj` followed by `EncoderLayer` | 15 (13) | 1,280 up, 960 down | 3,520 |
 
-(fp16 values.)  All intermediates stay in the SPM of tile 0: Y buffers feed
-the next GEMM directly, the residual Adds accumulate in place, ReLU and K^T
-run in SPM.  Constant weights are resident: `main_graph_preload()` uploads
-them once.  The single-tile chain waits after every launch.
+(fp16 values.)  Attention uses the three RedMulE tiles: Q, K and V are
+launched on tiles 0, 1 and 2 together and share one wait; the block input is
+uploaded to (or, when it is already in SPM, moved to) each of them, and K^T
+(transposed on the way) and V are moved to tile 0 through data memory
+(`aismem.SPMMoveTile`, `omrm_spm_move_f16`), where S, O and Y are computed.
+Everything else stays in the SPM of tile 0: Y buffers feed the next GEMM
+directly, the residual Adds accumulate in place, ReLU runs in SPM.  Constant
+weights are resident (Wk in tile 1, Wv in tile 2): `main_graph_preload()`
+uploads them once.  Outside attention, every launch is followed by its wait.
 
 MatMul and Add use the same launch, `Y = X . W + Y`: the `aisle-tile` pass
 splits the MatMul into two chained K-tile launches on `aisle.Window` views
@@ -53,6 +58,12 @@ lowering, and not legal inside ONNXToAISLE); see `src/Dialect/AISLE/AISLE.md`.
 Current limits of the RedMulE lowering (diagnosed, not miscompiled): one head,
 L = 12, d_model = 16, d_ff multiple of 16, f16, `normalization = "relu"`,
 scales foldable into constant weights.  The runtime needs
-`omrm_upload_tile_f16` and `omrm_spm_{relu,transpose,copy}_f16` in
+`omrm_upload_tile_f16`, `omrm_spm_move_f16` and
+`omrm_spm_{relu,transpose,copy}_f16` in
 `isolde/system/bsp/onnx_redmule_runtime.c`; firmware must call
 `main_graph_preload()` once before the first inference.
+
+## Example
+```sh
+make BLOCK=mha DEBUG_DIALECT_CONVERSION=yes ONNX_IR_DUMP=after ONNX_DEBUG_LOG_DIR=debug-mha  graph
+```
