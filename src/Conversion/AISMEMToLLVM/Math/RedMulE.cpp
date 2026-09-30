@@ -34,6 +34,7 @@ constexpr StringLiteral zeroFunc = "omrm_zero_f16";
 constexpr StringLiteral gemm16x12x16Func = "omrm_gemm_f16_16_12_16";
 constexpr StringLiteral waitFunc = "omrm_wait";
 constexpr StringLiteral downloadFunc = "omrm_download_f16";
+constexpr StringLiteral downloadTileFunc = "omrm_download_tile_f16";
 
 static LLVM::LLVMFuncOp getOrInsertFunction(Operation *anchor,
     ConversionPatternRewriter &rewriter, StringRef name, Type resultType,
@@ -420,21 +421,23 @@ public:
     FailureOr<int64_t> elements = getIntegerAttribute(op, "elements");
     if (failed(tile) || failed(elements))
       return rewriter.notifyMatchFailure(op, "expected tile/elements attrs");
-    if ((*elements % 16) != 0)
-      return op->emitError("RedMulE download requires complete 16-f16 rows");
-
     auto downloadOp = cast<spade::AISMEMRedMulEDownloadOp>(op);
     const int64_t dstOffset = downloadOp.getDstOffset();
     const int64_t dstLd = downloadOp.getDstLd();
-    const int64_t rows = *elements / 16;
+    const int64_t cols = downloadOp.getCols();
+    if (cols < 1 || cols > 16 || (*elements % cols) != 0)
+      return op->emitError(
+          "RedMulE download copies whole rows of 1..16 columns");
+    const int64_t rows = *elements / cols;
     auto destinationType = dyn_cast<MemRefType>(op->getOperand(1).getType());
-    const bool contiguous = dstOffset == 0 && dstLd == 16;
+    const bool contiguous = cols == 16 && dstOffset == 0 && dstLd == 16;
     if (!destinationType || !destinationType.getElementType().isF16() ||
         !destinationType.hasStaticShape() ||
         (contiguous && destinationType.getNumElements() != *elements) ||
-        (!contiguous && (dstLd < 16 || dstOffset < 0 ||
-                            dstOffset + (rows - 1) * dstLd + 16 >
-                                destinationType.getNumElements())))
+        (!contiguous &&
+            (dstLd < cols || dstOffset < 0 || rows > 16 ||
+                dstOffset + (rows - 1) * dstLd + cols >
+                    destinationType.getNumElements())))
       return op->emitError(
           "RedMulE download requires a matching static f16 destination");
 
@@ -442,27 +445,28 @@ public:
     Type i32 = rewriter.getI32Type();
     Type ptr = LLVM::LLVMPointerType::get(rewriter.getContext());
     Type voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
-    auto function = getOrInsertFunction(
-        op, rewriter, downloadFunc, voidType, {i32, i32, ptr, i32});
     if (contiguous) {
+      auto function = getOrInsertFunction(
+          op, rewriter, downloadFunc, voidType, {i32, i32, ptr, i32});
       rewriter.create<LLVM::CallOp>(loc, function,
           ValueRange{i32Constant(rewriter, loc, *tile), operands[0],
               operands[1], i32Constant(rewriter, loc, *elements)});
     } else {
-      // A tile of a wider result: one SPM row (16 fp16, 64 bytes of SPM)
-      // per destination row.
-      constexpr int64_t spmRowBytes = 64;
-      for (int64_t r = 0; r < rows; ++r) {
-        Value spm = rewriter.create<LLVM::AddOp>(loc, operands[0],
-            i32Constant(rewriter, loc, r * spmRowBytes));
-        Value dst = rewriter.create<LLVM::GEPOp>(loc, ptr,
-            rewriter.getF16Type(), operands[1],
-            ArrayRef<LLVM::GEPArg>{
-                static_cast<int32_t>(dstOffset + r * dstLd)});
-        rewriter.create<LLVM::CallOp>(loc, function,
-            ValueRange{i32Constant(rewriter, loc, *tile), spm, dst,
-                i32Constant(rewriter, loc, 16)});
-      }
+      // A tile of a wider result, or a result narrower than 16 / shorter
+      // than 12 rows: omrm_download_tile_f16(tile, spm, dst, dst_ld, rows,
+      // cols) with dst already offset to the tile's first element.
+      auto function = getOrInsertFunction(op, rewriter, downloadTileFunc,
+          voidType, {i32, i32, ptr, i32, i32, i32});
+      Value dst = operands[1];
+      if (dstOffset != 0)
+        dst = rewriter.create<LLVM::GEPOp>(loc, ptr, rewriter.getF16Type(),
+            operands[1],
+            ArrayRef<LLVM::GEPArg>{static_cast<int32_t>(dstOffset)});
+      rewriter.create<LLVM::CallOp>(loc, function,
+          ValueRange{i32Constant(rewriter, loc, *tile), operands[0], dst,
+              i32Constant(rewriter, loc, dstLd),
+              i32Constant(rewriter, loc, rows),
+              i32Constant(rewriter, loc, cols)});
     }
     rewriter.replaceOp(op, completedToken(rewriter, loc));
     return success();

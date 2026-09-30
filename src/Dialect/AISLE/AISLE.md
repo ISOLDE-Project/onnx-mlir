@@ -57,16 +57,23 @@ runs unchanged in onnxruntime.
 
 ## MatMul, Gemm and Add on RedMulE
 
-`convert-onnx-to-aisle` also lowers f16 `onnx.MatMul` `[.., 12, 16K] x [16K,
-16N]`, f16 `onnx.Gemm` `[12, 16K] x [16K, 16N] (+ [12, 16N])` (alpha = beta
-= 1, transA = 0, any transB; onnx-mlir fuses a rank-2 MatMul + Add into it)
-and f16 `onnx.Add` `[.., 12, 16] + [.., 12, 16]` to `aisle.MatMul` /
-`aisle.GEMM` / `aisle.Add`; other shapes and types stay on their previous
-paths.  Products are kept whole at this point.
+`convert-onnx-to-aisle` also lowers f16 `onnx.MatMul` `[.., M, 16K] x [16K,
+N]`, f16 `onnx.Gemm` `[M, 16K] x [16K, N] (+ [M, N])` (alpha = beta = 1,
+transA = 0, any transB; onnx-mlir fuses a rank-2 MatMul + Add into it), with
+M <= 12 and N a multiple of 16 or N < 16, f16 `onnx.Add` `[.., 12, 16] + [..,
+12, 16]` and f16 `onnx.ReduceMean` over the frames axis of `[.., L <= 12, D <=
+16]` to `aisle.MatMul` / `aisle.GEMM` / `aisle.Add` / `aisle.ReduceMean`;
+other shapes and types stay on their previous paths.  Products are kept whole
+at this point.
 
 ### Tiling: `aisle-tile`, `aisle.Window`, `aisle.Concat`
 
-The `aisle-tile` pass (right after `convert-onnx-to-aisle`) splits every such
+The `aisle-tile` pass (right after `convert-onnx-to-aisle`) first turns
+`Add(MatMul(A, B), C)` with an `[M, N]` C (no broadcast beyond leading 1s,
+the MatMul has no other user) into `GEMM(A, B, C)`: onnx-mlir only does this
+for rank 2, and the rank-3 `[1, 12, 32]` input projection + positional
+encoding of the encoder needs it to accumulate onto C like the firmware.  It
+then splits every such
 product that is larger than one RedMulE launch into native launches
 `Y[12x16] (+)= X[12x16] . W[16x16]` on views of its operands:
 
@@ -91,6 +98,12 @@ Y = Concat(acc_0 .. acc_N-1, axis = last)
   strided `aismem.RedMulEDownload` (`dst_offset`, `dst_ld`) per tile.
 * Tiles are named `<onnx node>[n<n>,k<k>]`, which also names their SPM
   buffers.  All tiles run on RedMulE instance 0 for now; M is not tiled.
+* Partial tiles: M < 12 rows and one N-tile narrower than 16 columns run the
+  same launch on zero-padded operands (rows of Y depend only on the same rows
+  of X, columns only on the same columns of W); only the M x N corner is
+  downloaded (`aismem.RedMulEDownload` `cols`, runtime
+  `omrm_download_tile_f16(tile, spm, dst, dst_ld, rows, cols)`, also used
+  for the strided N-tile downloads).
 * Constant operands are split at compile time instead of windowed: an
   `onnx.Constant` read only by products being tiled becomes one constant per
   tile (a transB tile already transposed, so it carries transB = 0), and the
@@ -108,6 +121,11 @@ Each tile then becomes one launch `Y = X . W + Y`:
 * Add: `X = I` (12x16 identity, resident, one per function), `W = pad16(A)`
   (resident when constant), `Y = B`, in place when B may be overwritten, so
   `Y = I . W + Y = A + B` in one launch.
+* ReduceMean (radar_attention `tf_pool`): `X = POOL` (fp16(1/L) in columns
+  0..L-1 of every row, resident), `W = pad16(H)`, `Y = 0`: every row of Y is
+  the mean over H's L rows.  The result stays in SPM; a following product
+  uses the whole replicated buffer as X (the classifier head), and a download
+  copies row 0.
 
 Every upload of a constant is prepared at compile time: AISLE -> AISMEM
 stores the exact SPM image the upload would produce (window, transpose, zero
@@ -118,10 +136,14 @@ then dropped, so the only extra data is the padding rows.
 
 Constant W windows are resident (uploaded once by `<entry>_preload`), and
 `aismem-spm-allocate` merges repeated uploads of the same data-memory window
-(e.g. the X tile shared by all N-tiles).  For the radar encoder the rank-2
-input projection + positional encoding is 2 launches and bit-exact with the
-firmware's `tf_golden_proj`; the rank-3 form (MatMul + Add) is 3 launches and
-differs from it by at most 1.2e-3.
+(e.g. the X tile shared by all N-tiles).  The radar encoder's input
+projection + positional encoding (rank 2 as Gemm, rank 3 as MatMul + Add) is
+2 launches and bit-exact with the firmware's `tf_golden_proj`.
+
+The whole 2-layer radar encoder (`test-isolde/attention`, `make check`) then
+compiles without any Krnl code: 28 launches (as the firmware; 24 waits
+against the firmware's 20 barriers), logits bit-exact with
+`tf_logits_golden`, and a 4-element download of row 0 of the head's Y.
 
 ## SPM-resident activations and SPM row management
 

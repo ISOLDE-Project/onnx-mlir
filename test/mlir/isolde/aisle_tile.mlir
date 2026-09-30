@@ -82,3 +82,44 @@ func.func @split_constant(%a: tensor<12x32xf16>, %c: tensor<12x16xf16>) -> tenso
 // CHECK:       "aisle.GEMM"({{%.+}}, {{%.+}}, [[W0]], {{%.+}}, {{%.+}}) <{transA = 0 : si64, transB = 0 : si64}>
 // CHECK:       "aisle.GEMM"({{%.+}}, {{%.+}}, [[W1]], {{%.+}}, {{%.+}}) <{transA = 0 : si64, transB = 0 : si64}>
 // CHECK-NOT:   "aisle.Window"(%{{.*}}) {{.*}} -> tensor<16x16xf16>
+
+// -----
+
+// Add(MatMul(A, B), C) with C [M, N] is one GEMM: C preloads Y of K-tile 0
+// (firmware launch_bias), no Add launch.  C may drop leading 1s.  A MatMul
+// with another user, or a broadcast C, is left alone.
+func.func @fuse_add(%x: tensor<1x12x32xf16>, %w: tensor<32x16xf16>, %p: tensor<12x16xf16>, %q: tensor<1x16xf16>) -> (tensor<1x12x16xf16>, tensor<1x12x16xf16>, tensor<1x12x16xf16>) {
+  %s = "aisle.qconstant"() <{name = "A_shape", shape = [1, 4], value = dense<[[1, 1, 12, 32]]> : tensor<1x4xi32>}> : () -> tensor<1x4xi32>
+  %e = "aisle.MatMul"(%x, %s, %w, %s) {onnx_node_name = "proj"} : (tensor<1x12x32xf16>, tensor<1x4xi32>, tensor<32x16xf16>, tensor<1x4xi32>) -> tensor<1x12x16xf16>
+  %y = "aisle.Add"(%p, %s, %e, %s) : (tensor<12x16xf16>, tensor<1x4xi32>, tensor<1x12x16xf16>, tensor<1x4xi32>) -> tensor<1x12x16xf16>
+  %f = "aisle.MatMul"(%x, %s, %w, %s) {onnx_node_name = "shared"} : (tensor<1x12x32xf16>, tensor<1x4xi32>, tensor<32x16xf16>, tensor<1x4xi32>) -> tensor<1x12x16xf16>
+  %z = "aisle.Add"(%f, %s, %q, %s) : (tensor<1x12x16xf16>, tensor<1x4xi32>, tensor<1x16xf16>, tensor<1x4xi32>) -> tensor<1x12x16xf16>
+  return %y, %z, %f : tensor<1x12x16xf16>, tensor<1x12x16xf16>, tensor<1x12x16xf16>
+}
+// CHECK-LABEL: func.func @fuse_add
+// CHECK-SAME:    ([[X:%.+]]: tensor<1x12x32xf16>, [[W:%.+]]: tensor<32x16xf16>, [[P:%.+]]: tensor<12x16xf16>, [[Q:%.+]]: tensor<1x16xf16>)
+// CHECK:       [[Y0:%.+]] = "aisle.GEMM"({{%.+}}, {{%.+}}, {{%.+}}, {{%.+}}, [[P]]) {{.*}}{onnx_node_name = "proj[n0,k0]"}
+// CHECK:       [[Y1:%.+]] = "aisle.GEMM"({{%.+}}, {{%.+}}, {{%.+}}, {{%.+}}, [[Y0]]) {{.*}}{onnx_node_name = "proj[n0,k1]"}
+// CHECK:       "aisle.MatMul"({{.*}}{onnx_node_name = "shared[n0,k0]"}
+// CHECK:       [[F:%.+]] = "aisle.GEMM"({{.*}}{onnx_node_name = "shared[n0,k1]"}
+// CHECK:       [[Z:%.+]] = "aisle.Add"([[F]], {{%.+}}, [[Q]],
+// CHECK:       return [[Y1]], [[Z]], [[F]]
+
+// -----
+
+// Partial tiles: M = 5 rows (zero padded at run time) and N = 4 < 16 columns
+// (one narrow N-tile): the windows keep M and the tile width is N.
+func.func @partial(%a: tensor<5x32xf16>, %b: tensor<32x4xf16>, %c: tensor<5x4xf16>) -> tensor<5x4xf16> {
+  %s = "aisle.qconstant"() <{name = "A_shape", shape = [1, 4], value = dense<[[1, 1, 5, 32]]> : tensor<1x4xi32>}> : () -> tensor<1x4xi32>
+  %y = "aisle.GEMM"(%a, %s, %b, %s, %c) <{transA = 0 : si64, transB = 0 : si64}> : (tensor<5x32xf16>, tensor<1x4xi32>, tensor<32x4xf16>, tensor<1x4xi32>, tensor<5x4xf16>) -> tensor<5x4xf16>
+  return %y : tensor<5x4xf16>
+}
+// CHECK-LABEL: func.func @partial
+// CHECK-SAME:    ([[A:%.+]]: tensor<5x32xf16>, [[B:%.+]]: tensor<32x4xf16>, [[C:%.+]]: tensor<5x4xf16>)
+// CHECK-DAG:   [[A0:%.+]] = "aisle.Window"([[A]]) <{offsets = array<i64: 0, 0>}> : (tensor<5x32xf16>) -> tensor<5x16xf16>
+// CHECK-DAG:   [[B0:%.+]] = "aisle.Window"([[B]]) <{offsets = array<i64: 0, 0>}> : (tensor<32x4xf16>) -> tensor<16x4xf16>
+// CHECK:       [[Y0:%.+]] = "aisle.GEMM"([[A0]], {{%.+}}, [[B0]], {{%.+}}, [[C]]) {{.*}} -> tensor<5x4xf16>
+// CHECK-DAG:   [[A1:%.+]] = "aisle.Window"([[A]]) <{offsets = array<i64: 0, 16>}> : (tensor<5x32xf16>) -> tensor<5x16xf16>
+// CHECK-DAG:   [[B1:%.+]] = "aisle.Window"([[B]]) <{offsets = array<i64: 16, 0>}> : (tensor<32x4xf16>) -> tensor<16x4xf16>
+// CHECK:       [[Y1:%.+]] = "aisle.GEMM"([[A1]], {{%.+}}, [[B1]], {{%.+}}, [[Y0]]) {{.*}} -> tensor<5x4xf16>
+// CHECK:       return [[Y1]]

@@ -20,6 +20,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "src/Conversion/AISLEToAISMEM/Math/SPMValue.hpp"
 #include "src/Dialect/AISMEM/AISMEMOps.hpp"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/Twine.h"
 
 #include <cassert>
@@ -221,10 +222,12 @@ public:
   // zero padded to 16 rows; resident when the source is a constant.
   // With `transpose`, the window is read as rows x 16 of the source and
   // stored transposed (a W tile of B^T for Gemm transB = 1).
+  // `cols` < 16 (not transposed): a W narrower than 16 columns, zero padded.
   Value weightWindow(const Matrix &m, int64_t rowOff, int64_t colOff,
-      int64_t rows, const Twine &name, bool transpose = false) {
-    return upload(m, rowOff, colOff, rows, kK, kN, name, isConstant(m.memref),
-        ValueRange{}, transpose)
+      int64_t rows, const Twine &name, bool transpose = false,
+      int64_t cols = kK) {
+    return upload(m, rowOff, colOff, rows, cols, kN, name,
+        isConstant(m.memref), ValueRange{}, transpose)
         .address;
   }
 
@@ -240,15 +243,15 @@ public:
     return {w, copy(v.address, w, kM, z), tile_};
   }
 
-  // The 12x16 identity (ones on the diagonal) as a resident X operand, so
-  // that Y = I . W + Y adds W's first 12 rows to Y.  One per function.
-  Value identity() {
+  // A constant 12 x 16 X operand, resident: `value(i, j)` for row i, column
+  // j.  One buffer per name and function (per tile: the name carries it).
+  Value residentMatrix(StringRef baseName, StringRef globalBase,
+      llvm::function_ref<float(int64_t, int64_t)> value) {
     const std::string bufferName =
-        tile_ == 0 ? std::string("aismem.identity12x16")
-                   : ("aismem.identity12x16.t" + Twine(tile_)).str();
+        tile_ == 0 ? baseName.str() : (baseName + ".t" + Twine(tile_)).str();
     const std::string globalName =
-        tile_ == 0 ? std::string("aismem_identity_12x16")
-                   : ("aismem_identity_12x16_t" + Twine(tile_)).str();
+        tile_ == 0 ? globalBase.str()
+                   : (globalBase + "_t" + Twine(tile_)).str();
     Operation *parent = rewriter.getInsertionBlock()->getParentOp();
     AISMEMSPMAllocOp found;
     parent->walk([&](AISMEMSPMAllocOp a) {
@@ -263,7 +266,7 @@ public:
     SmallVector<APFloat> values;
     for (int64_t i = 0; i < kM; ++i)
       for (int64_t j = 0; j < kN; ++j) {
-        APFloat v(i == j ? 1.0f : 0.0f);
+        APFloat v(value(i, j));
         bool lost;
         v.convert(APFloat::IEEEhalf(), APFloat::rmNearestTiesToEven, &lost);
         values.push_back(v);
@@ -284,8 +287,6 @@ public:
                             TypeRange{rewriter.getI32Type()}, ValueRange{},
                             attrs)
                         .getAddress();
-    Matrix m{global, kM, kN};
-    SmallVector<Value> operands{m.memref, address};
     SmallVector<NamedAttribute> uattrs{attr("tile", tile_),
         attr("row_offset", 0), attr("col_offset", 0), attr("rows", kM),
         attr("cols", kN), attr("dst_rows", kM), attr("dst_cols", kK),
@@ -293,9 +294,26 @@ public:
         rewriter.getNamedAttr("relu", rewriter.getBoolAttr(false)),
         rewriter.getNamedAttr("negate", rewriter.getBoolAttr(false))};
     rewriter.create<AISMEMRedMulEUploadTileOp>(loc,
-        TypeRange{rewriter.getI32Type(), rewriter.getNoneType()}, operands,
-        uattrs);
+        TypeRange{rewriter.getI32Type(), rewriter.getNoneType()},
+        ValueRange{global, address}, uattrs);
     return address;
+  }
+
+  // The 12x16 identity (ones on the diagonal) as a resident X operand, so
+  // that Y = I . W + Y adds W's first 12 rows to Y.  One per function.
+  Value identity() {
+    return residentMatrix("aismem.identity12x16", "aismem_identity_12x16",
+        [](int64_t i, int64_t j) { return i == j ? 1.0f : 0.0f; });
+  }
+
+  // The mean over L rows as a resident X operand: fp16(1/L) in columns
+  // 0..L-1 of every row, so that Y = POOL . pad16(H) puts the mean of H's
+  // L rows into every row of Y (radar_attention's tf_pool).
+  Value meanPool(int64_t l) {
+    const float inv = 1.0f / static_cast<float>(l);
+    return residentMatrix(("aismem.meanpool" + Twine(l)).str(),
+        ("aismem_meanpool_" + Twine(l)).str(),
+        [&](int64_t, int64_t j) { return j < l ? inv : 0.0f; });
   }
 
   // Block operand as an SPM buffer on this tile: as is, moved over from

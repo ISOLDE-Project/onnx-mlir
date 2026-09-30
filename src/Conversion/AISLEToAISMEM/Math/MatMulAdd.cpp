@@ -20,6 +20,13 @@
 //     Y is the operand that can be overwritten in place (an SPM result with
 //     no other user) when there is one; constants go to W (resident).
 //
+//   aisle.ReduceMean  mean over the L <= 12 rows of H[L x D <= 16]
+//     X <- POOL (fp16(1/L) in columns < L, resident), W <- pad16(H),
+//     Y <- 0; every row of Y holds the mean (firmware tf_pool).
+//
+//   M < 12 or N < 16 (a partial tile) runs the same launch on zero-padded
+//   operands; only the M x N corner is downloaded.
+//
 //   aisle.Window  of data memory: a memref.subview that the upload reading
 //                 it folds into its offsets; of a tiled SPM result: a tile.
 //   aisle.Concat  of SPM tiles: a tiled SPM value (no data movement).
@@ -97,49 +104,66 @@ std::optional<ProductShape> productShape(Operation *op, bool transB) {
   return s;
 }
 
-// A product aisle-tile would split (or has split): f16, [12, 16K] x [16K, 16N].
+// A product aisle-tile would split (or has split): f16,
+// [M <= 12, 16K] x [16K, 16N or N < 16].
 bool isRedMulEProduct(Operation *op, bool transB) {
   std::optional<ProductShape> s = productShape(op, transB);
-  return s && s->f16 && s->m == kM && s->kb == s->k && s->k % kN == 0 &&
-         s->n % kK == 0 && s->k > 0 && s->n > 0;
+  return s && s->f16 && s->m >= 1 && s->m <= kM && s->kb == s->k &&
+         s->k % kN == 0 && s->k > 0 && s->n > 0 &&
+         (s->n % kK == 0 || s->n < kK);
 }
 
 // X[12x16] . W[16x16] (+ C): exactly one launch.  A and C may be SPM results
 // or (windows of) data memory; B comes from data memory (a constant B is
 // resident).  With C this is the firmware's launch_bias, and with C the
 // result of the previous K-tile (dead otherwise) it is launch_accumulate.
+// A partial tile, [M < 12, 16] x [16, N < 16], runs the same launch on
+// zero-padded operands: rows of Y depend only on the same rows of X, and
+// columns of Y only on the same columns of W, so the extra rows / columns
+// are never read back (the download copies M x N).
 LogicalResult lowerNativeProduct(Operation *op, Value aValue, Value bValue,
     Value cValue, Value cOrig, bool transB, Type resultType,
     ConversionPatternRewriter &rewriter) {
   std::optional<ProductShape> s = productShape(op, transB);
-  if (!s || s->m != kM || s->k != kN || s->kb != kN || s->n != kK)
+  if (!s || s->m < 1 || s->m > kM || s->k != kN || s->kb != kN || s->n < 1 ||
+      s->n > kK)
     return op->emitError()
-           << "not a native RedMulE launch (needs [12, 16] x [16, 16], got ["
+           << "not a native RedMulE launch (needs [M <= 12, 16] x [16, "
+              "N <= 16], got ["
            << (s ? s->m : -1) << ", " << (s ? s->k : -1) << "] x ["
            << (s ? s->kb : -1) << ", " << (s ? s->n : -1)
            << "]); run aisle-tile first";
-  FailureOr<Operand> a = classify(op, aValue, "A", kM, kN);
-  FailureOr<Operand> b = classify(op, bValue, "B", kN, kK);
+  const int64_t m = s->m, n = s->n;
+  FailureOr<Operand> a = classify(op, aValue, "A", m, kN);
+  FailureOr<Operand> b =
+      classify(op, bValue, "B", transB ? n : kN, transB ? kN : n);
   if (failed(a) || failed(b))
     return failure();
   if (!b->host)
     return op->emitError("RedMulE MatMul/Gemm: B must come from data memory");
   std::optional<Operand> c;
   if (cValue) {
-    FailureOr<Operand> co = classify(op, cValue, "C", kM, kK);
+    FailureOr<Operand> co = classify(op, cValue, "C", m, n);
     if (failed(co))
       return failure();
     c = *co;
   }
 
   Emitter emit(rewriter, op->getLoc(), blockName(op, "matmul"));
-  Value w = transB ? emit.weightWindow(*b->host, 0, 0, kK, "W",
+  // W: B's 16 x N (or, transposed, N x 16) window, zero padded to 16 x 16.
+  Value w = transB ? emit.weightWindow(*b->host, 0, 0, n, "W",
                          /*transpose=*/true)
-                   : emit.weightWindow(*b->host, 0, 0, kN, "W");
-  SPMValue x = emit.activation(*a, "X");
+                   : emit.weightWindow(*b->host, 0, 0, kN, "W",
+                         /*transpose=*/false, /*cols=*/n);
+  // X: A's M rows (zero padded to 12 when uploaded).
+  SPMValue x = a->host ? emit.upload(*a->host, 0, 0, m, kN, kM, "X",
+                             /*resident=*/false, ValueRange{})
+                       : emit.activation(*a, "X");
   // Y = C (uploaded, or an SPM value in place / copied) or 0.
   const bool cDead = mayOverwrite(cOrig, op);
-  SPMValue y = emit.accumulator(c, cDead, ValueRange{});
+  SPMValue y = c && c->host ? emit.upload(*c->host, 0, 0, m, n, kM, "Y",
+                                  /*resident=*/false, ValueRange{})
+                            : emit.accumulator(c, cDead, ValueRange{});
   SmallVector<Value> deps{y.token};
   if (a->spm)
     deps.push_back(x.token);
@@ -330,11 +354,75 @@ struct AISLEAddOpLowering : public ConversionPattern {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// ReduceMean over the frames axis
+//===----------------------------------------------------------------------===//
+
+// aisle.ReduceMean  mean over the L <= 12 rows of an f16 [.., L, D <= 16]
+// tensor, as the firmware's tf_pool: one launch
+//   Y = POOL . pad16(H) + 0,   POOL[12 x 16] = fp16(1/L) in columns 0..L-1
+// (resident).  Every row of Y holds the mean (RedMulE rounds to FP16 after
+// each of the 16 steps, like the firmware), so the result is an SPM value
+// whose first row is the [.., D] result; a following MatMul uses the whole
+// buffer as its X operand, and a download copies row 0.
+struct AISLEReduceMeanOpLowering : public ConversionPattern {
+  AISLEReduceMeanOpLowering(MLIRContext *ctx)
+      : ConversionPattern(AISLEReduceMeanOp::getOperationName(), 1, ctx) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const final {
+    auto oldOp = cast<AISLEReduceMeanOp>(op);
+    int64_t l, d;
+    auto type = dyn_cast<RankedTensorType>(oldOp.getX().getType());
+    if (failed(matrixShape(oldOp.getX(), l, d)) ||
+        !type.getElementType().isF16() || l < 1 || l > kM || d < 1 ||
+        d > kK)
+      return op->emitError("RedMulE ReduceMean needs f16 [.., L <= 12, "
+                           "D <= 16] with leading dims 1");
+    auto outType = cast<RankedTensorType>(oldOp.getY().getType());
+    if (!outType.hasStaticShape() || outType.getShape().back() != d ||
+        outType.getNumElements() != d)
+      return op->emitError("RedMulE ReduceMean: the result must be [.., D]");
+
+    AISLEReduceMeanOpAdaptor adaptor(operands);
+    FailureOr<Operand> h = classify(op, adaptor.getX(), "X", l, d);
+    if (failed(h))
+      return failure();
+
+    Emitter emit(rewriter, op->getLoc(), blockName(op, "reducemean"));
+    // W = pad16(H): H's L rows, zero padded to 16 rows (and columns).
+    Value w;
+    SmallVector<Value> deps;
+    if (h->host) {
+      w = emit.weightWindow(*h->host, 0, 0, l, "H|0", /*transpose=*/false,
+          /*cols=*/d);
+    } else if (h->spm->tile != emit.tile()) {
+      SPMValue pw = emit.move(*h->spm, l, kN, "H|0");
+      w = pw.address;
+      deps.push_back(pw.token);
+    } else {
+      // Only rows 0..L-1 are copied: rows L..15 of W must be zero (POOL
+      // has zeros there, but 0 * Inf would not be).
+      w = emit.alloc(kN, "H|0");
+      Value z = emit.zero(w, kN, ValueRange{h->spm->token});
+      deps.push_back(emit.copy(h->spm->address, w, l, z));
+    }
+    Value pool = emit.meanPool(l);
+    SPMValue y = emit.accumulator(std::nullopt, false, ValueRange{});
+    deps.push_back(y.token);
+    Value t = emit.gemm(pool, w, y.address, deps);
+    rewriter.replaceOp(op,
+        makeSPMTensor(rewriter, op->getLoc(), outType, {y.address, t, y.tile}));
+    return success();
+  }
+};
+
 void populateLoweringAISLEMatMulAddOpPatterns(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx) {
   (void)typeConverter;
   patterns.insert<AISLEMatMulOpLowering, AISLEGEMMOpRedMulELowering,
-      AISLEAddOpLowering, AISLEWindowOpLowering, AISLEConcatOpLowering>(ctx);
+      AISLEAddOpLowering, AISLEWindowOpLowering, AISLEConcatOpLowering,
+      AISLEReduceMeanOpLowering>(ctx);
 }
 
 } // namespace spade

@@ -54,6 +54,12 @@ Weight sources (the number of layers comes from the source):
   --from-torch   a seeded (untrained) tformer.Encoder with --layers layers
         (default 2), *unfolded*: scale and post_scale stay visible as
         attributes.  Needs torch.
+
+--golden V (with a header) also writes <out>.npz for
+test-isolde/transformer/check_aismem.py: the firmware's input window
+tf_features from V (tformer_vectors.h, default inc/tformer_vectors.h) as
+`h` [1,12,32], its tf_logits_golden (RedMulE FP16 arithmetic, bit-exact
+target) as `y_redmule` [1,C], and a float64 forward pass as `y_float`.
 """
 from __future__ import annotations
 
@@ -346,6 +352,24 @@ def features_from_header(path):
     return np.concatenate([tiles[0], tiles[1]], axis=1)
 
 
+def logits_golden_from_header(path, n_classes):
+    """tf_logits_golden of tformer_weights.h: the firmware's FP16 logits."""
+    a, _ = _header_arrays(path)
+    return a['tf_logits_golden'][:n_classes].reshape(1, n_classes)
+
+
+def float_reference(params, window):
+    """float64 forward pass of the encoder (A = ReLU(Q K^T s) p V)."""
+    f = lambda v: np.asarray(v, dtype=np.float64)
+    h = f(window) @ f(params['proj']) + f(params['pos'])
+    for layer in params['layers']:
+        q, k, v = (h @ f(layer[w]) for w in ('wq', 'wk', 'wv'))
+        a = np.maximum(q @ k.T * layer['scale'], 0) * layer['post_scale']
+        h = h + a @ v @ f(layer['wo'])
+        h = h + np.maximum(h @ f(layer['w1']), 0) @ f(layer['w2'])
+    return (h.mean(axis=0) @ f(params['head'])).reshape(1, -1)
+
+
 # ---------------------------------------------------------------------------
 def default_header(here):
     """`make model` output (2 layers) if present, else the committed 1-layer
@@ -376,6 +400,11 @@ def main():
     ap.add_argument('--out', type=Path, default=Path('models/tformer_encoder.onnx'))
     ap.add_argument('--no-functions', action='store_true',
                     help='omit the FunctionProto bodies (onnx-mlir only)')
+    ap.add_argument('--golden', type=Path, nargs='?', default=None,
+                    const=Path(__file__).resolve().parent / 'inc/tformer_vectors.h',
+                    metavar='VECTORS_H',
+                    help='with a header: also write <out>.npz (input window, '
+                         'firmware logits golden) for check_aismem.py')
     ap.add_argument('--inlined', action='store_true',
                     help='also write the standard-ops-only twin (*_inlined.onnx)')
     args = ap.parse_args()
@@ -407,6 +436,17 @@ def main():
     print(f'wrote {args.out}  ({len(params["layers"])} layer(s), {args.dtype}, '
           f'from {source})')
     print('  graph: ' + ', '.join(ops))
+    if args.golden is not None:
+        if args.from_torch:
+            ap.error('--golden needs --from-header (the firmware goldens)')
+        window = features_from_header(args.golden)
+        n_classes = params['head'].shape[1]
+        npz = args.out.with_suffix('.npz')
+        np.savez(npz, h=window.reshape(1, *window.shape).astype(np.float16),
+                 y_redmule=logits_golden_from_header(header, n_classes),
+                 y_float=float_reference(params, window))
+        print(f'wrote {npz}  (input {args.golden.name}:tf_features, '
+              f'y_redmule = tf_logits_golden)')
     if args.inlined:
         if args.no_functions:
             ap.error('--inlined needs the function bodies')

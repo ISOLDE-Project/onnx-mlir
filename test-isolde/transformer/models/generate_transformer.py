@@ -262,19 +262,13 @@ def fold(w, factor):
     return (w.astype(np.float64) * factor).astype(np.float16)
 
 
-def identity12():
-    i = np.zeros((L, D), np.float16)
-    i[np.arange(L), np.arange(L)] = 1
-    return i
-
-
 def redmule_reference(block, p, h):
     if block in ("proj", "proj_layer"):
-        # MatMul: Y = 0, two K-tiles; Add: Y = I . pad16(P) + Y
+        # MatMul + Add is one GEMM (aisle-tile): Y = P, then two K-tiles
+        # accumulate onto it -- the firmware's launch_bias order.
         x = h.reshape(L, F).astype(np.float16)
-        y = gemm16(x[:, :16], p["proj"][:16], np.zeros((L, D), np.float16))
+        y = gemm16(x[:, :16], p["proj"][:16], p["pos"].astype(np.float16))
         y = gemm16(x[:, 16:], p["proj"][16:], y)
-        y = gemm16(identity12(), pad(p["pos"]), y)
         if block == "proj":
             return y.reshape(1, L, D)
         return redmule_reference("layer", p, y.reshape(1, L, D))

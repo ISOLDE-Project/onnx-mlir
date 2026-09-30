@@ -28,9 +28,13 @@
 // contiguous 16x16 (W) or 12x16 (C) global: the uploads take the runtime's
 // plain-copy path, and the original constant, now unused, is dropped.
 //
+// First, Add(MatMul(A, B), C) with an [M, N] C becomes GEMM(A, B, C) (see
+// fuseMatMulAdd): C preloads Y, as in the firmware's launch_bias.
+//
 // All tiles run on RedMulE instance 0 for now; the tile GEMMs carry
 // `onnx_node_name = "<op>[n<n>,k<k>]"`, which also names their SPM buffers.
-// M is not tiled (A must have 12 rows).  Anything else is left untouched:
+// M is not tiled: A has at most 12 rows (fewer run as a zero-padded tile).
+// N is a multiple of 16, or one narrower tile.  Anything else is left untouched:
 // the legacy AISLE GEMM lowering or Krnl handle it.
 //
 //===----------------------------------------------------------------------===//
@@ -77,7 +81,9 @@ struct Product {
   Operation *op = nullptr;
   Value a, b, c;
   bool transB = false;
-  int64_t k = 0, n = 0;
+  int64_t m = 0;      // rows (<= 12: fewer run as a zero-padded tile)
+  int64_t k = 0, n = 0; // number of K and N tiles
+  int64_t width = 0;  // columns of an N tile: 16, or all N if N < 16
 };
 
 // A MatMul/GEMM that fits the RedMulE tiling but is not one launch already.
@@ -103,19 +109,21 @@ std::optional<Product> tileable(Operation *op) {
       cast<RankedTensorType>(p.b.getType()).getRank() != 2)
     return std::nullopt;
   const int64_t kb = p.transB ? bc : br, n = p.transB ? br : bc;
-  if (m != kRows || kb != k || k % kTile != 0 || n % kTile != 0 || k == 0 ||
-      n == 0 || ym != kRows || yn != n)
+  if (m < 1 || m > kRows || kb != k || k % kTile != 0 || k == 0 || n < 1 ||
+      (n % kTile != 0 && n > kTile) || ym != m || yn != n)
     return std::nullopt;
   if (p.c) {
+    // C must be [m, n] (leading dims of 1 may differ from Y's).
     int64_t cr, cc;
-    if (!f16Matrix(p.c, cr, cc) || cr != kRows || cc != n ||
-        p.c.getType() != op->getResult(0).getType())
+    if (!f16Matrix(p.c, cr, cc) || cr != m || cc != n)
       return std::nullopt; // broadcast C: not handled here
   }
-  if (k == kTile && n == kTile)
+  if (k == kTile && n <= kTile)
     return std::nullopt; // already one launch
+  p.m = m;
   p.k = k / kTile;
-  p.n = n / kTile;
+  p.n = n < kTile ? 1 : n / kTile;
+  p.width = n < kTile ? n : kTile;
   return p;
 }
 
@@ -215,7 +223,7 @@ void tile(const Product &p, const SplitSet &split) {
   OpBuilder b(op);
   auto yType = cast<RankedTensorType>(op->getResult(0).getType());
   SmallVector<int64_t> tileShape(yType.getShape());
-  tileShape.back() = kTile;
+  tileShape.back() = p.width;
   auto tileType = RankedTensorType::get(tileShape, yType.getElementType());
   const std::string base = baseName(op);
   auto si64 = [&](int64_t v) {
@@ -226,15 +234,15 @@ void tile(const Product &p, const SplitSet &split) {
   SmallVector<Value> tiles;
   for (int64_t n = 0; n < p.n; ++n) {
     Value acc =
-        p.c ? window(b, loc, p.c, 0, n * kTile, kRows, kTile, split) : Value();
+        p.c ? window(b, loc, p.c, 0, n * kTile, p.m, p.width, split) : Value();
     for (int64_t k = 0; k < p.k; ++k) {
-      Value a = window(b, loc, p.a, 0, k * kTile, kRows, kTile, split);
+      Value a = window(b, loc, p.a, 0, k * kTile, p.m, kTile, split);
       // transB: a constant B is transposed here, at compile time.
       bool preTransposed = false;
-      Value w = p.transB ? window(b, loc, p.b, n * kTile, k * kTile, kTile,
+      Value w = p.transB ? window(b, loc, p.b, n * kTile, k * kTile, p.width,
                                kTile, split, /*transpose=*/true, &preTransposed)
                          : window(b, loc, p.b, k * kTile, n * kTile, kTile,
-                               kTile, split);
+                               p.width, split);
       const bool tileTransB = p.transB && !preTransposed;
       Value aShape = shapeOperand(b, loc, "A_shape", a);
       Value wShape = shapeOperand(b, loc, "B_shape", w);
@@ -266,6 +274,53 @@ void tile(const Product &p, const SplitSet &split) {
   op->erase();
 }
 
+// aisle.Add(aisle.MatMul(A, B), C) -> aisle.GEMM(A, B, C) for a RedMulE
+// product (f16, [M <= 12, 16K] x [16K, 16N or N < 16]) whose only user is the
+// Add, and C an [M, N] matrix (no broadcast beyond leading dims of 1).  C is
+// then preloaded into Y of the first K-tile (firmware launch_bias): no extra
+// Add launch, and the same FP16 rounding as the firmware, which accumulates
+// X . W onto C step by step (e.g. the input projection onto the positional
+// encoding) rather than adding C to the rounded product.  onnx-mlir only
+// canonicalizes rank-2 MatMul + Add into Gemm; this covers [1, M, K] inputs.
+void fuseMatMulAdd(ModuleOp module) {
+  SmallVector<AISLEAddOp> adds;
+  module.walk([&](AISLEAddOp add) { adds.push_back(add); });
+  for (AISLEAddOp add : adds) {
+    for (int side = 0; side < 2; ++side) {
+      Value prod = side == 0 ? add.getA() : add.getB();
+      Value c = side == 0 ? add.getB() : add.getA();
+      auto mm = prod.getDefiningOp<AISLEMatMulOp>();
+      if (!mm || !prod.hasOneUse() ||
+          prod.getType() != add.getC().getType())
+        continue;
+      int64_t m, k, br, n, cr, cc;
+      if (!f16Matrix(mm.getA(), m, k) || !f16Matrix(mm.getB(), br, n) ||
+          !f16Matrix(c, cr, cc) ||
+          cast<RankedTensorType>(mm.getB().getType()).getRank() != 2 ||
+          m < 1 || m > kRows || k == 0 || k % kTile != 0 || br != k ||
+          n < 1 || (n % kTile != 0 && n > kTile) || cr != m || cc != n)
+        continue;
+      OpBuilder b(add);
+      auto si64 = [&](int64_t v) {
+        return b.getIntegerAttr(
+            IntegerType::get(b.getContext(), 64, IntegerType::Signed), v);
+      };
+      auto gemm = b.create<AISLEGEMMOp>(add.getLoc(),
+          TypeRange{add.getC().getType()},
+          ValueRange{mm.getA(), mm->getOperand(1), mm.getB(),
+              mm->getOperand(3), c},
+          ArrayRef<NamedAttribute>{b.getNamedAttr("transA", si64(0)),
+              b.getNamedAttr("transB", si64(0))});
+      if (auto name = mm->getAttrOfType<StringAttr>("onnx_node_name"))
+        gemm->setAttr("onnx_node_name", name);
+      add.getC().replaceAllUsesWith(gemm.getY());
+      add->erase();
+      mm->erase();
+      break;
+    }
+  }
+}
+
 struct AISLETilingPass
     : public PassWrapper<AISLETilingPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AISLETilingPass)
@@ -281,6 +336,7 @@ struct AISLETilingPass
   }
 
   void runOnOperation() final {
+    fuseMatMulAdd(getOperation());
     // Program order: a producer is tiled before its consumers, so their
     // Windows see its Concat and fold to its tiles.
     SmallVector<Product> products;

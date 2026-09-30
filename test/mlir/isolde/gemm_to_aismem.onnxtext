@@ -69,9 +69,9 @@ agraph (float16[12,32] window) => (float16[12,16] h, float16[12,16] ht, float16[
 // CHECK:       "aismem.RedMulEGEMM"([[X1]], [[W1]], [[YT]],
 // hn: three N-tiles, each downloaded into its 16 columns of the 12x48 result.
 // CHECK:       [[HN:%.+]] = memref.alloc() {{.*}} : memref<12x48xf16>
-// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{dst_ld = 48 : i32, dst_offset = 0 : i32, elements = 192
-// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{dst_ld = 48 : i32, dst_offset = 16 : i32, elements = 192
-// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{dst_ld = 48 : i32, dst_offset = 32 : i32, elements = 192
+// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{cols = 16 : i32, dst_ld = 48 : i32, dst_offset = 0 : i32, elements = 192
+// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{cols = 16 : i32, dst_ld = 48 : i32, dst_offset = 16 : i32, elements = 192
+// CHECK:       "aismem.RedMulEDownload"({{%.+}}, [[HN]], {{%.+}}) <{cols = 16 : i32, dst_ld = 48 : i32, dst_offset = 32 : i32, elements = 192
 // CHECK:       return
 // Every resident W tile is its own 16x16 global, uploaded as a plain copy
 // (no offsets, no transpose): 2 for w (shared with wt), 6 for w3.

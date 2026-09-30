@@ -189,14 +189,16 @@ class Machine:
             dst = self.get(ops[1])
             n = a["elements"]
             self.downloaded += n
-            rows = self.rows(a["tile"], self.get(ops[0]), n // ROW_ELEMS, b[0])
+            cols = a.get("cols", ROW_ELEMS)
+            rows = self.rows(a["tile"], self.get(ops[0]), n // cols,
+                             b[0])[:, :cols]
             off, ld = a.get("dst_offset", 0), a.get("dst_ld", ROW_ELEMS)
             flat = dst.reshape(-1)
-            if off == 0 and ld == ROW_ELEMS:
+            if off == 0 and ld == ROW_ELEMS and cols == ROW_ELEMS:
                 flat[:] = rows.reshape(-1)[:dst.size]
-            else:  # one tile of a wider result
+            else:  # a tile of a wider result, or a partial tile
                 for r, row in enumerate(rows):
-                    flat[off + r * ld:off + r * ld + ROW_ELEMS] = row
+                    flat[off + r * ld:off + r * ld + cols] = row
             self.values[res[0]] = None
         elif op == "aismem.SPMRelu":
             t, addr, n = a["tile"], self.get(ops[0]), a["rows"]
@@ -322,6 +324,9 @@ def main():
     print(f"per inference: {mach.uploaded} fp16 uploaded, {mach.downloaded} "
           f"downloaded, {mach.core_spm} touched in SPM by the core")
     print(f"bit-exact vs RedMulE FP16 reference: {exact}")
+    if not exact and y.size <= 64:
+        print("  got     ", y.reshape(-1))
+        print("  expected", ref["y_redmule"].reshape(-1))
     print(f"max |y - float64 reference| = {err:.4g}")
     sys.exit(0 if exact and not unknown and not mach.violations else 1)
 

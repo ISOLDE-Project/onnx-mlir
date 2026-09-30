@@ -17,8 +17,8 @@ make graph  BLOCK=mha        # all SPADE emission levels (common.mk)
 | `mha`   | `h + MultiHeadAttention(h, h)` | 6 (4) | 1,088 up, 576 down | 1,024 |
 | `ffn`   | `h + PositionwiseFeedForward(h)` (d_ff = `D_FF`, default 48) | 6 (6) | 192 up, 192 down | 1,536 |
 | `layer` | `EncoderLayer` = both, residuals included | 12 (10) | 1,088 up, 576 down | 2,560 |
-| `proj`  | `MatMul([1,12,32], [32,16]) + P` (input embedding + positional encoding) | 3 (3) | 384 up, 192 down | 960 |
-| `proj_layer` | `proj` followed by `EncoderLayer` | 15 (13) | 1,280 up, 960 down | 3,520 |
+| `proj`  | `MatMul([1,12,32], [32,16]) + P` (input embedding + positional encoding) | 2 (2) | 576 up, 192 down | 512 |
+| `proj_layer` | `proj` followed by `EncoderLayer` | 14 (12) | 1,472 up, 960 down | 3,072 |
 
 (fp16 values.)  Attention uses the three RedMulE tiles: Q, K and V are
 launched on tiles 0, 1 and 2 together and share one wait; the block input is
@@ -36,10 +36,12 @@ splits the MatMul into two chained K-tile launches on `aisle.Window` views
 (resident), W to one operand zero padded to 16 rows, and Y to the other
 operand (in place when it may be overwritten).
 
-A rank-2 MatMul followed by an Add is canonicalized by onnx-mlir into
-`onnx.Gemm` (see `test-isolde/projection`).  It becomes one `aisle.GEMM`,
-which `aisle-tile` splits into K-tiles (and N-tiles when wider than 16): the
-Add costs no extra launch, C is uploaded into Y of the first K-tile
+A MatMul followed by an Add of an `[M, N]` operand is one `aisle.GEMM`
+(onnx-mlir canonicalizes the rank-2 form into `onnx.Gemm`, see
+`test-isolde/projection`; `aisle-tile` fuses the rank-3 form, e.g. `proj`).
+`aisle-tile`
+splits it into K-tiles (and N-tiles when wider than 16): the Add costs no
+extra launch, C is uploaded into Y of the first K-tile
 (firmware `launch_bias`), the next K-tile accumulates (`launch_accumulate`).
 `transB = 1` uploads the W windows transposed.  Windows are `aisle.Window`
 views folded into the upload offsets, never `onnx.Slice` (no RedMulE
@@ -55,10 +57,15 @@ lowering, and not legal inside ONNXToAISLE); see `src/Dialect/AISLE/AISLE.md`.
   owns every SPM row (a read of rows another live buffer overwrote is an
   error), reports the data moved, and fails if host arithmetic is left over.
 
+The mean pool + classifier head of the full encoder (`ReduceMean` over the
+frames, then `MatMul [1,16] x [16,4]`) are two more launches, see
+`test-isolde/attention` (`make check`: logits bit-exact with the firmware's
+`tf_logits_golden`).
+
 Current limits of the RedMulE lowering (diagnosed, not miscompiled): one head,
 L = 12, d_model = 16, d_ff multiple of 16, f16, `normalization = "relu"`,
 scales foldable into constant weights.  The runtime needs
-`omrm_upload_tile_f16`, `omrm_spm_move_f16` and
+`omrm_upload_tile_f16`, `omrm_download_tile_f16`, `omrm_spm_move_f16` and
 `omrm_spm_{relu,transpose,copy}_f16` in
 `isolde/system/bsp/onnx_redmule_runtime.c`; firmware must call
 `main_graph_preload()` once before the first inference.

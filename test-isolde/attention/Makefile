@@ -25,10 +25,23 @@ golden: check-conda-torch_env $(DST_DIR)
 	  --from-header $(WEIGHTS) --layers $(LAYERS) \
 	  --out $(ONNX_MODEL) --inlined
 
+## compile the whole encoder to the RedMulE schedule and compare the logits
+## bit-exactly with the firmware's tf_logits_golden (input: tf_features of
+## models/inc/tformer_vectors.h); no torch needed
+VECTORS             ?=  $(DST_DIR)/inc/tformer_vectors.h
+check: $(DST_DIR)
+	python3 $(DST_DIR)/tformer_onnx.py \
+	  --from-header $(WEIGHTS) --layers $(LAYERS) \
+	  --out $(ONNX_MODEL) --golden $(VECTORS)
+	$(ONNX_INSTALL_DIR)/bin/onnx-mlir $(ONNX_MLIR_FLAGS) \
+	  --mtriple=riscv32-unknown-elf --EmitSPADEMLIR -o graph $(ONNX_MODEL)
+	python3 $(TOP_LEVEL_DIR)/test-isolde/transformer/check_aismem.py \
+	  graph.spade.mlir $(basename $(ONNX_MODEL)).npz
+
 # Ensure the destination directory exists
 $(DST_DIR):
 	@mkdir -p $@
 
-.PHONY: golden clean-model
+.PHONY: golden check clean-model
 clean-model:
-	rm -f $(DST_DIR)/*.onnx
+	rm -f $(DST_DIR)/*.onnx $(DST_DIR)/*.npz

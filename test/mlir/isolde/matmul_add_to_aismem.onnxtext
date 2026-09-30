@@ -1,17 +1,18 @@
 // RUN: onnx-mlir --EmitSPADEMLIR --printIR %s | FileCheck %s
 
 // Input projection + positional encoding of the radar encoder on RedMulE:
-//   MatMul [1,12,32] x [32,16]: aisle-tile splits it into two chained
-//                               launches [n0,k0] (Y = 0) and [n0,k1] (Y
-//                               accumulates in place);
-//   Add    [1,12,16] + [12,16]: X = identity, W = pad16(P), Y = MatMul result
-//                               (in place: it has no other user).
+//   MatMul [1,12,32] x [32,16] + P[12,16]: aisle-tile fuses the Add into one
+//                               GEMM and splits it into two chained launches
+//                               [n0,k0] (Y = P, firmware launch_bias) and
+//                               [n0,k1] (Y accumulates in place);
+//   Add    [1,12,16] + [12,16] of a graph input: X = identity, W = pad16(P),
+//                               Y = the uploaded input.
 // The f32 MatMul is not a RedMulE shape/type and stays on the Krnl path.
 <
 ir_version: 9,
 opset_import: [ "" : 18 ]
 >
-agraph (float16[1,12,32] x, float[12,16] a, float[16,4] b) => (float16[1,12,16] y, float[12,4] z)
+agraph (float16[1,12,32] x, float16[1,12,16] r, float[12,16] a, float[16,4] b) => (float16[1,12,16] y, float16[1,12,16] s, float[12,4] z)
 {
     ws = Constant <value = int64[2] {32, 16}> ()
     w32 = ConstantOfShape <value = float[1] {0.5}> (ws)
@@ -21,17 +22,19 @@ agraph (float16[1,12,32] x, float[12,16] a, float[16,4] b) => (float16[1,12,16] 
     p = Cast <to = 10> (p32)
     e = MatMul (x, w)
     y = Add (e, p)
+    s = Add (r, p)
     z = MatMul (a, b)
 }
 // CHECK-LABEL: func.func @main_graph
-// CHECK-SAME:    ([[X:%.+]]: memref<1x12x32xf16>
-// K-tile 0: resident W, X = window [:, 0:16] of x, Y = 0.
+// CHECK-SAME:    ([[X:%.+]]: memref<1x12x32xf16> {{.*}}, [[R:%.+]]: memref<1x12x16xf16>
+// CHECK:     [[P:%.+]] = "krnl.global"() {name = "constant_{{[0-9]+}}", shape = [12, 16]
+// K-tile 0: resident W, X = window [:, 0:16] of x, Y = P (uploaded).
 // CHECK:     [[W0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].W", resident = true
 // CHECK:     [[X0:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].X"
 // CHECK-NEXT: "aismem.RedMulEUploadTile"([[X]], [[X0]]) <{col_offset = 0 : i32
 // CHECK:     [[Y:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}[n0,k0].Y"
-// CHECK-NEXT: [[Z:%.+]] = "aismem.RedMulEZero"([[Y]]) <{elements = 192 : i32
-// CHECK-NEXT: [[G0:%.+]] = "aismem.RedMulEGEMM"([[X0]], [[W0]], [[Y]], [[Z]])
+// CHECK-NEXT: {{%.+}}, [[C:%.+]] = "aismem.RedMulEUploadTile"([[P]], [[Y]])
+// CHECK-NEXT: [[G0:%.+]] = "aismem.RedMulEGEMM"([[X0]], [[W0]], [[Y]], [[C]])
 // CHECK-NEXT: [[T0:%.+]] = "aismem.RedMulEWait"([[G0]])
 // K-tile 1: X = window [:, 16:32], accumulates into the same Y.  W is a
 // splat, so its two compile-time tiles are equal: one constant, one buffer.
@@ -39,11 +42,17 @@ agraph (float16[1,12,32] x, float[12,16] a, float[16,4] b) => (float16[1,12,16] 
 // CHECK-NEXT: "aismem.RedMulEUploadTile"([[X]], [[X1]]) <{col_offset = 16 : i32
 // CHECK-NOT: RedMulEZero
 // CHECK:     "aismem.RedMulEGEMM"([[X1]], [[W0]], [[Y]], [[T0]])
-// Add: X = the resident identity, W = pad16(P) (resident), Y = e in place.
+// No separate Add launch for y:
+// CHECK-NEXT: "aismem.RedMulEWait"
+// CHECK-NEXT: memref.alloc
+// CHECK-NEXT: "aismem.RedMulEDownload"([[Y]],
+// Add of r: X = the resident identity, W = pad16(P) (resident), Y = r.
 // CHECK:     [[I:%.+]] = "aismem.SPMAlloc"() <{name = "aismem.identity12x16", resident = true, row = {{[0-9]+}} : i32, rows = 12
-// CHECK:     [[P:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}W", resident = true, row = {{[0-9]+}} : i32, rows = 16
-// CHECK:     "aismem.RedMulEGEMM"([[I]], [[P]], [[Y]],
-// CHECK:     "aismem.RedMulEDownload"([[Y]],
+// CHECK:     [[PW:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}W", resident = true, row = {{[0-9]+}} : i32, rows = 16
+// CHECK:     [[RY:%.+]] = "aismem.SPMAlloc"() <{name = "{{.*}}Y"
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[R]], [[RY]])
+// CHECK:     "aismem.RedMulEGEMM"([[I]], [[PW]], [[RY]],
+// CHECK:     "aismem.RedMulEDownload"([[RY]],
 // The f32 MatMul stays on the Krnl path:
 // CHECK:     affine.for
 // CHECK:     return
@@ -52,6 +61,6 @@ agraph (float16[1,12,32] x, float[12,16] a, float[16,4] b) => (float16[1,12,16] 
 // CHECK:     "krnl.global"() {alignment = 16 : i64, name = "aismem_identity_12x16"
 // The Add's W = pad16(P) is padded at compile time: a 16x16 global holding
 // P's 12 rows (0.25 = 0x3400) and 4 zero rows, uploaded as a plain copy.
-// CHECK:     [[PW:%.+]] = "krnl.global"() {alignment = 16 : i64, name = "constant_{{[0-9]+}}_spm_r0c0_12x16_16", shape = [16, 16], value = dense<"0x{{(0034){192}(0000){63}0000}}"> : tensor<16x16xf16>}
+// CHECK:     [[PG:%.+]] = "krnl.global"() {alignment = 16 : i64, name = "constant_{{[0-9]+}}_spm_r0c0_12x16_16", shape = [16, 16], value = dense<"0x{{(0034){192}(0000){63}0000}}"> : tensor<16x16xf16>}
 // CHECK-NEXT: "aismem.SPMAlloc"() <{name = "{{.*}}Add{{.*}}.W"
-// CHECK-NEXT: "aismem.RedMulEUploadTile"([[PW]], {{%.+}}) <{col_offset = 0 : i32, cols = 16 : i32, dst_cols = 16 : i32, dst_rows = 16 : i32, negate = false, relu = false, row_offset = 0 : i32, rows = 16 : i32
+// CHECK-NEXT: "aismem.RedMulEUploadTile"([[PG]], {{%.+}}) <{col_offset = 0 : i32, cols = 16 : i32, dst_cols = 16 : i32, dst_rows = 16 : i32, negate = false, relu = false, row_offset = 0 : i32, rows = 16 : i32

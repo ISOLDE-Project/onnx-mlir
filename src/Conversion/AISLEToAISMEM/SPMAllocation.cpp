@@ -73,23 +73,24 @@ void materializeSPMResults(ModuleOp module) {
     Location loc = cast.getLoc();
     auto alloc = builder.create<memref::AllocOp>(loc, memrefType);
     alloc.setAlignmentAttr(builder.getI64IntegerAttr(16));
-    // One tile: a contiguous copy.  N tiles side by side: tile j fills
+    // One tile: a contiguous copy of its rows (just its first cols if the
+    // result is narrower than 16).  N tiles side by side: tile j fills
     // columns [16j, 16j + 16) of every row.
     const int64_t rowLength = tensorType.getShape().back();
-    const int64_t tileElements =
-        memrefType.getNumElements() / static_cast<int64_t>(tiles.size());
+    const int64_t rows = memrefType.getNumElements() / rowLength;
     const int64_t tileCols = rowLength / static_cast<int64_t>(tiles.size());
     for (auto [j, tile] : llvm::enumerate(tiles)) {
+      auto i32 = [&](int64_t v) {
+        return builder.getI32IntegerAttr(static_cast<int32_t>(v));
+      };
       SmallVector<NamedAttribute> attrs{
-          builder.getNamedAttr("tile", builder.getI32IntegerAttr(tile.tile)),
-          builder.getNamedAttr("elements",
-              builder.getI32IntegerAttr(static_cast<int32_t>(tileElements)))};
-      if (tiles.size() > 1) {
-        attrs.push_back(builder.getNamedAttr("dst_offset",
-            builder.getI32IntegerAttr(static_cast<int32_t>(j * tileCols))));
+          builder.getNamedAttr("tile", i32(tile.tile)),
+          builder.getNamedAttr("elements", i32(rows * tileCols))};
+      if (tiles.size() > 1 || tileCols != 16) {
         attrs.push_back(builder.getNamedAttr(
-            "dst_ld", builder.getI32IntegerAttr(
-                          static_cast<int32_t>(rowLength))));
+            "dst_offset", i32(static_cast<int64_t>(j) * tileCols)));
+        attrs.push_back(builder.getNamedAttr("dst_ld", i32(rowLength)));
+        attrs.push_back(builder.getNamedAttr("cols", i32(tileCols)));
       }
       builder.create<AISMEMRedMulEDownloadOp>(loc,
           TypeRange{builder.getNoneType()},
